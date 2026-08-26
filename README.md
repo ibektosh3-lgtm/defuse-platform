@@ -1,14 +1,16 @@
-# CyberNet — Kiberkafe Boshqaruv Platformasi
-
-**Gaming Center Management Platform — full-stack SaaS solution**
+<div align="center">
+  <img src="logo.png" alt="Defuse Logo" width="120" />
+  <h1>Defuse</h1>
+  <p><strong>Kiberkafe Boshqaruv Platformasi — Gaming Center Management Platform</strong></p>
+</div>
 
 ---
 
-## Ozbek tilida
+## O'zbek tilida
 
-CyberNet — bu kompyuter klublari va kiberkafelar uchun to'liq boshqaruv tizimi.
-Platforma sessiya nazorati, to'lovlar, mijozlar bazasi, ombor, statistika va
-mobil ilova orqali onlayn bron qilishni bir joyda birlashtiradi.
+**Defuse** — kompyuter klublar va kiberkafelar uchun to'liq bulut asosidagi boshqaruv tizimi.
+
+Platforma sessiya nazorati, to'lovlar, mijozlar bazasi, o'yinlar katalogi, snack-bar POS va kiberport turnirlar modulini yagona tizimda birlashtiradi.
 
 **Asosiy imkoniyatlar:**
 
@@ -21,14 +23,11 @@ mobil ilova orqali onlayn bron qilishni bir joyda birlashtiradi.
 
 ## In English
 
-CyberNet is a full-fledged management platform for gaming centers and cyber cafes.
-The stack combines a Node.js/PostgreSQL backend, a React admin dashboard, a
-Flutter mobile client for customers, and an Electron kiosk agent that runs on
-each gaming PC.
+**Defuse** is a full-stack SaaS management platform for gaming centers and cyber cafes.
 
 **Key features:**
 
-- Real-time PC and session control via an Electron desktop agent
+- Real-time PC and session control via Electron desktop agent
 - React admin panel — POS, analytics, staff, promotions, loyalty rewards
 - Flutter mobile app — bookings, wallet, friends, tournaments, leaderboard
 - Payment gateway integrations (Click, Payme, Uzum, Apelsin, Anor)
@@ -42,13 +41,13 @@ each gaming PC.
 | Layer | Technology |
 |---|---|
 | Backend API | Node.js, Express 5, PostgreSQL, Redis, WebSocket |
-| Auth | JWT, bcrypt, TOTP 2FA, refresh-token rotation |
-| Admin panel | React 18, React Router, Axios, i18next |
-| Desktop agent | Electron, electron-updater, Windows lockdown scripts |
-| Mobile app | Flutter 3, Dio, shared_preferences |
-| Payments | Click, Payme (Paycom), Uzum, Apelsin, Anor |
+| Auth | JWT, bcrypt, TOTP 2FA |
+| Admin panel | React 18, React Router, Axios |
+| Desktop agent | Electron, electron-updater, Windows lockdown |
+| Mobile app | Flutter 3, Dart |
+| Payments | Click, Payme, Uzum, Apelsin, Anor |
 | Push | Firebase Cloud Messaging |
-| Deploy | PM2, Nginx, Cloudflare Tunnel |
+| Deploy | PM2, Nginx, Cloudflare |
 
 ## Repository Layout
 
@@ -56,32 +55,13 @@ each gaming PC.
 backend/         Node.js REST API + WebSocket server
 admin-panel/     React dashboard for club owners and staff
 desktop-agent/   Electron kiosk launcher for gaming PCs
-mobile_app/      Flutter customer app (iOS, Android, Web)
+mobile_app/      Flutter customer app (iOS, Android)
 ```
-
-## Features (short)
-
-- Session timer with automatic time/money accounting
-- Kassa (POS) with snack pre-orders and refunds
-- Booking system (single, bulk, recurring)
-- Membership tiers, promo codes, referral bonuses
-- Achievements, leaderboard, gamer profiles
-- Tournaments with brackets and prize distribution
-- Fiscal receipts, expense tracking, daily reports
-- Multi-lab / multi-club support with per-lab theming
-- Live announcements and push notifications
-- Anti-cheat and access-control tools
 
 ---
 
 ## Status
 
-**This is a demo / showcase version of the codebase.**
+This is a showcase version. All secrets and server addresses replaced with placeholders.
 
-All secrets, API keys, server addresses, and payment credentials have been
-replaced with placeholders (`YOUR_SERVER_IP`, `YOUR_JWT_SECRET`, etc.). The
-repository is intended as a portfolio reference and does not include the
-production configuration, deployment scripts, uploaded assets, or the private
-`.env` files.
-
-**Contact for full access, licensing, or a live demo.**
+**Contact for full access, licensing, or a live demo · defuse.uz**
