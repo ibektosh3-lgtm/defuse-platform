@@ -1,0 +1,101 @@
+# ─── Environment / secrets ──────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+config.local.json
+
+# ─── Node.js ────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+package-lock.json.bak
+
+# ─── React / build output ───────────────────────────────
+build/
+dist/
+out/
+.cache/
+coverage/
+
+# ─── Electron ───────────────────────────────────────────
+desktop-agent/dist/
+desktop-agent/build/
+*.exe
+*.dmg
+*.AppImage
+*.deb
+*.rpm
+*.snap
+*.msi
+release/
+
+# ─── Flutter / Dart ─────────────────────────────────────
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+.packages
+build/
+pubspec.lock
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+android/.gradle/
+android/local.properties
+android/key.properties
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist
+android/app/upload-keystore.jks
+android/app/release.keystore
+
+# ─── IDE / editor ───────────────────────────────────────
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+
+# ─── OS artifacts ───────────────────────────────────────
+.DS_Store
+._*
+Thumbs.db
+desktop.ini
+
+# ─── Logs / temp ────────────────────────────────────────
+*.log
+logs/
+tmp/
+temp/
+
+# ─── User data / uploads ────────────────────────────────
+uploads/
+public/uploads/
+backend/uploads/
+
+# ─── Archives ───────────────────────────────────────────
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+
+# ─── Backups ────────────────────────────────────────────
+*.bak
+*.bak_*
+*.orig
+
+# ─── Claude / AI tooling ────────────────────────────────
+.claude/
+.claude-flow/
+.aider*
