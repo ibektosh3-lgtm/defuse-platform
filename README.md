@@ -1,6 +1,7 @@
 <div align="center">
-  <img src=".github/wordmark.png" alt="Defuse" width="640"/>
+  <img src=".github/logo.png" alt="Defuse" width="180"/>
 
+  <h1>DEFUSE</h1>
   <h3>Gaming Center Cloud — Multi-tenant SaaS for Uzbekistan</h3>
 
   <p>
