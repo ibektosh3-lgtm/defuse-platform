@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0a0f1e"/>
+      <stop offset="100%" stop-color="#151d33"/>
+    </linearGradient>
+    <linearGradient id="neon" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#27E0FF"/>
+      <stop offset="50%" stop-color="#8B5CF6"/>
+      <stop offset="100%" stop-color="#FF1E6E"/>
+    </linearGradient>
+    <linearGradient id="dGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#27E0FF"/>
+      <stop offset="100%" stop-color="#FF1E6E"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="8" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <g opacity="0.08" stroke="#27E0FF" stroke-width="1">
+    <line x1="0" y1="64" x2="512" y2="64"/>
+    <line x1="0" y1="128" x2="512" y2="128"/>
+    <line x1="0" y1="192" x2="512" y2="192"/>
+    <line x1="0" y1="256" x2="512" y2="256"/>
+    <line x1="0" y1="320" x2="512" y2="320"/>
+    <line x1="0" y1="384" x2="512" y2="384"/>
+    <line x1="0" y1="448" x2="512" y2="448"/>
+    <line x1="64" y1="0" x2="64" y2="512"/>
+    <line x1="128" y1="0" x2="128" y2="512"/>
+    <line x1="192" y1="0" x2="192" y2="512"/>
+    <line x1="256" y1="0" x2="256" y2="512"/>
+    <line x1="320" y1="0" x2="320" y2="512"/>
+    <line x1="384" y1="0" x2="384" y2="512"/>
+    <line x1="448" y1="0" x2="448" y2="512"/>
+  </g>
+
+  <path d="M 120 100 L 120 412 L 280 412 Q 400 412 400 256 Q 400 100 280 100 Z"
+        fill="url(#dGrad)" filter="url(#glow)"/>
+
+  <path d="M 178 158 L 178 354 L 274 354 Q 342 354 342 256 Q 342 158 274 158 Z"
+        fill="#0a0f1e"/>
+
+  <line x1="60" y1="60" x2="180" y2="180" stroke="url(#neon)" stroke-width="6" stroke-linecap="round" opacity="0.85"/>
+  <line x1="452" y1="452" x2="332" y2="332" stroke="url(#neon)" stroke-width="6" stroke-linecap="round" opacity="0.85"/>
+
+  <circle cx="256" cy="256" r="14" fill="#FF1E6E">
+    <animate attributeName="opacity" values="1;0.3;1" dur="2s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="256" cy="256" r="26" fill="none" stroke="#FF1E6E" stroke-width="2" opacity="0.5"/>
+</svg>
