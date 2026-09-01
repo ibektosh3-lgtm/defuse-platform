@@ -145,7 +145,7 @@ flutter run
 ## Contact
 
 - 🌐 Web — **defuse.uz** (coming soon)
-- 📧 Email — **hello@defuse.uz**
+- 📧 Email — **ibektosh3@gmail.com**
 - 💼 GitHub — [ibektosh3-lgtm](https://github.com/ibektosh3-lgtm)
 
 ---
