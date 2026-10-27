@@ -1,9 +1,9 @@
 const { rateLimit } = require('express-rate-limit');
 
-// Redis ixtiyoriy — bo'lmasa in-memory store ishlatiladi
+// Redis is optional — falls back to an in-memory store
 let RedisStore, Redis;
-try { RedisStore = require('rate-limit-redis').RedisStore; } catch { /* yo'q */ }
-try { Redis = require('ioredis'); } catch { /* yo'q */ }
+try { RedisStore = require('rate-limit-redis').RedisStore; } catch { /* not installed */ }
+try { Redis = require('ioredis'); } catch { /* not installed */ }
 
 let redisReady = false;
 let redisClient;
@@ -17,7 +17,7 @@ if (Redis && RedisStore) {
     redisClient.on('ready', () => { redisReady = true; });
     redisClient.on('error', () => { redisReady = false; });
     redisClient.on('close', () => { redisReady = false; });
-  } catch { /* Redis mavjud emas */ }
+  } catch { /* Redis not available */ }
 }
 
 function makeStore(prefix) {
@@ -33,10 +33,10 @@ function getIp(req) {
   return ip;
 }
 
-// express-rate-limit v7+ IPv6 validation ni o'chirish
+// Disable express-rate-limit v7+ IPv6 validation
 const rlValidate = { xForwardedForHeader: false, ip: false };
 
-// Login brute-force limit olib tashlandi
+// Login brute-force limit removed
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10000,
@@ -45,7 +45,7 @@ const loginLimiter = rateLimit({
   validate: rlValidate,
 });
 
-// Umumiy API: 200 so'rov / daqiqa
+// General API: 200 requests / minute
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 2000,
@@ -56,7 +56,7 @@ const apiLimiter = rateLimit({
   validate: rlValidate,
 });
 
-// Balans to'ldirish: 10 / daqiqa (bir user uchun)
+// Balance top-up: 10 / minute (per user)
 const topupLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
@@ -66,7 +66,7 @@ const topupLimiter = rateLimit({
   validate: rlValidate,
 });
 
-// OTP: 3 / 5 daqiqa
+// OTP: 3 / 5 minutes
 const otpLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,
   max: 3,
@@ -76,7 +76,7 @@ const otpLimiter = rateLimit({
   validate: rlValidate,
 });
 
-// ── VALIDATORLAR ──────────────────────────────────────────────────────────
+// ── VALIDATORS ────────────────────────────────────────────────────────────
 
 function validatePhone(phone) {
   if (!phone || typeof phone !== 'string') return false;
@@ -98,8 +98,8 @@ function validatePassword(password) {
   return password.length >= 6;
 }
 
-// Kuchli parol tekshiruvi (owner/staff/admin uchun)
-// Talab: kamida 8 belgi, harflar + raqamlar, common parollar bloklandi
+// Strong password check (for owner/staff/admin)
+// Requirement: at least 8 characters, letters + digits, common passwords blocked
 const COMMON_PASSWORDS = new Set([
   'password','12345678','qwerty12','admin123','admin1234','password1',
   'welcome1','abc12345','iloveyou','sunshine','princess','football',
@@ -128,7 +128,7 @@ function validateStrongPassword(password) {
   return { ok: true };
 }
 
-// Ishlab chiqarish muhitida ichki xatolarni yashirish
+// Hide internal errors in production
 function safeError(e, res, status = 500) {
   const isProd = process.env.NODE_ENV === 'production';
   const msg = isProd ? 'Ichki server xatosi' : e.message;

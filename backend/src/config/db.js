@@ -1,26 +1,26 @@
 const { Pool } = require('pg');
 require('dotenv').config();
 
-// Connection pool sozlamalari — uzoq davom etadigan process uchun
-// Postgres.app yangilangan yoki idle client uzoq kutgan bo'lsa,
-// eski clientlar avtomatik almashtiriladi
+// Connection pool settings — for a long-running process
+// If Postgres.app was updated or an idle client waited too long,
+// stale clients are replaced automatically
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-  max: 20,                       // maksimal ochiq client
-  idleTimeoutMillis: 30_000,     // 30s idle bo'lsa yopiladi
+  max: 20,                       // max open clients
+  idleTimeoutMillis: 30_000,     // closed after 30s idle
   connectionTimeoutMillis: 5_000,// ulanish uchun 5s cheklov
-  keepAlive: true,               // TCP keep-alive — DB tarafdan uzilishni oldini oladi
+  keepAlive: true,               // TCP keep-alive — prevents disconnects from the DB side
 });
 
-// Pool xato bo'lganda process crash bo'lmasin — faqat log yozamiz
-// (masalan Postgres.app restart bo'lganda idle clientlar uziladi)
+// Don't crash the process on pool errors — just log them
+// (e.g. idle clients drop when Postgres.app restarts)
 pool.on('error', (err) => {
   console.error('[db.pool] Kutilmagan xato idle clientda:', err.code, err.message);
 });
 
-// pool.query ni override qilamiz — connection-level xatolarda 1 marta qayta urinamiz
-// Pool o'zi yangi client oladi, biz shunchaki so'rovni takrorlaymiz
+// Override pool.query — retry once on connection-level errors
+// The pool fetches a new client itself; we just repeat the query
 const originalQuery = pool.query.bind(pool);
 pool.query = async function retryQuery(text, params) {
   try {

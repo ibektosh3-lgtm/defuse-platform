@@ -24,7 +24,7 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _obscurePass = true;
   String? _error;
 
-  // Telegram flow uchun polling timer — sahifa yopilsa bekor qilinsin
+  // Polling timer for the Telegram flow — cancel it if the page closes
   Timer? _tgPollTimer;
 
   @override
@@ -37,7 +37,7 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  // ── Telegram deep-link ro'yxatdan o'tish ────────────────────────────────
+  // ── Telegram deep-link registration ─────────────────────────────────────
   Future<void> _startTelegramFlow() async {
     setState(() {
       _loading = true;
@@ -63,7 +63,7 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    // Bot ochish
+    // Open the bot
     final uri = Uri.parse(botUrl);
     final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!launched) {
@@ -97,7 +97,7 @@ class _LoginScreenState extends State<LoginScreen> {
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setSheet) {
-            // Polling ni sheet ochilganda ishga tushiramiz
+            // Start polling when the sheet opens
             _tgPollTimer ??= Timer.periodic(const Duration(seconds: 2), (_) async {
               try {
                 final s = await ApiService.tgStatus(tgToken);
@@ -107,7 +107,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   _tgPollTimer = null;
                   if (Navigator.canPop(ctx)) Navigator.pop(ctx);
                 }
-              } catch (_) { /* keyingi tik kutamiz */ }
+              } catch (_) { /* wait for the next tick */ }
             });
 
             return Padding(
@@ -168,7 +168,7 @@ class _LoginScreenState extends State<LoginScreen> {
     if (cancelled || confirmedPhone == null) return;
     if (!mounted) return;
 
-    // Ism + parol so'rash
+    // Ask for name + password
     await _showTelegramCompleteSheet(tgToken, confirmedPhone!);
   }
 

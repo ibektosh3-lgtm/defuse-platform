@@ -39,7 +39,7 @@ export default function Sessions() {
 
   useEffect(() => { load(); }, [filter]); // eslint-disable-line
 
-  // Har 30 soniyada avtomatik yangilash
+  // Auto-refresh every 30 seconds
   useEffect(() => {
     const interval = setInterval(() => load(true), 30000);
     return () => clearInterval(interval);

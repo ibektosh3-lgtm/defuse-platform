@@ -1,6 +1,6 @@
-// IP whitelist middleware — agar owner IP whitelist sozlagan bo'lsa,
-// owner endpointlariga faqat ruxsatlangan IP dan kirish mumkin.
-// Whitelist bo'sh bo'lsa — cheklov yo'q.
+// IP whitelist middleware — if the owner has configured an IP whitelist,
+// owner endpoints are accessible only from allowed IPs.
+// If the whitelist is empty — no restriction.
 
 const pool = require('../config/db');
 const net = require('net');
@@ -48,22 +48,22 @@ function getClientIp(req) {
   return req.ip || req.connection?.remoteAddress || '';
 }
 
-// Middleware: owner uchun IP whitelist tekshirish
-// Auth dan oldin ishlatilishi mumkin — o'zi token verify qiladi
+// Middleware: IP whitelist check for owners
+// Can run before auth — it verifies the token itself
 async function checkOwnerWhitelist(req, res, next) {
   try {
     const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return next(); // auth middleware keyin 401 beradi
+    if (!token) return next(); // the auth middleware returns 401 later
     let decoded;
     try {
       decoded = require('jsonwebtoken').verify(token, process.env.JWT_SECRET);
     } catch {
-      return next(); // token xato — auth keyin hal qiladi
+      return next(); // invalid token — auth handles it later
     }
     if (decoded.role !== 'owner') return next();
 
     const cidrs = await getWhitelist(decoded.id);
-    if (!cidrs.length) return next(); // whitelist bo'sh — cheklov yo'q
+    if (!cidrs.length) return next(); // empty whitelist — no restriction
 
     let ip = getClientIp(req);
     if (ip.startsWith('::ffff:')) ip = ip.slice(7);

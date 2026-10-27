@@ -1,8 +1,8 @@
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 
-// JWT revocation cache — 10 soniya (parol o'zgartirish/reset tez tarqalsin,
-// juda ham qisqa qilmaymiz — har so'rovda DB ga urib bo'lmaydi)
+// JWT revocation cache — 10 seconds (so password changes/resets propagate quickly,
+// but not too short — we can't hit the DB on every request)
 const versionCache = new Map();
 const CACHE_TTL = 10 * 1000;
 
@@ -36,7 +36,7 @@ module.exports = async (req, res, next) => {
   if (!token) return res.status(401).json({ error: 'Token yo\'q' });
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    // Token_version tekshiruvi (parol yoki 2FA o'zgartirilgan bo'lsa eski token bekor)
+    // token_version check (the old token is invalid if the password or 2FA changed)
     if (decoded.role && decoded.id) {
       const current = await getCurrentVersion(decoded.role, decoded.id);
       const tokenVer = decoded.tv ?? 0;

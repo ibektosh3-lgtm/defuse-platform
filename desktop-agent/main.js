@@ -9,8 +9,8 @@ const { exec } = require('child_process');
 const QRCode = require('qrcode');
 
 // ── HARDWARE FINGERPRINT ──────────────────────────────────────────────────
-// MAC + CPU model + hostname → SHA-256 (32 belgi). Anti-piracy: raqib
-// nusxa olgan installda hardware fingerprint mos kelmasa server rad etadi.
+// MAC + CPU model + hostname → SHA-256 (32 chars). Anti-piracy: if a competitor
+// copies an install and the hardware fingerprint doesn't match, the server rejects it.
 function getHardwareId() {
   try {
     const nets = os.networkInterfaces();
@@ -29,7 +29,7 @@ function getHardwareId() {
       }
     }
     const pool = stableMacs.length > 0 ? stableMacs : allMacs;
-    // Faqat bitta MAC ishlatilsin — yangi interfeys paydo bo'lsa ham ID o'zgarmasin
+    // Use only one MAC — so the ID doesn't change when a new interface appears
     const primaryMac = pool.sort()[0] || 'nomac';
     const cpus = os.cpus();
     const cpuModel = cpus.length > 0 ? cpus[0].model : 'unknown';
@@ -44,10 +44,10 @@ function getHardwareId() {
 let agentConfig;
 function getConfigPath() {
   if (!app.isPackaged) return path.join(__dirname, 'config.json');
-  // Exe yonidagi config.json — har PC uchun alohida sozlash imkoni
+  // config.json next to the exe — allows separate settings per PC
   const sidecar = path.join(path.dirname(process.execPath), 'config.json');
   if (fs.existsSync(sidecar)) return sidecar;
-  // Fallback: exe ichidagi default config
+  // Fallback: the default config inside the exe
   return path.join(process.resourcesPath, 'config.json');
 }
 try {
@@ -55,17 +55,17 @@ try {
 } catch {
   agentConfig = { lab_id: 0, computer_id: 0, computer_number: '01', api_url: 'http://localhost:3000/api' };
 }
-// Simulyator/test uchun env orqali override qilish mumkin (10 ta oyna uchun har biri boshqa PC id)
+// Can be overridden via env for the simulator/testing (a different PC id for each of 10 windows)
 if (process.env.CB_LAB_ID) agentConfig.lab_id = Number(process.env.CB_LAB_ID);
 if (process.env.CB_COMPUTER_ID) agentConfig.computer_id = Number(process.env.CB_COMPUTER_ID);
 if (process.env.CB_COMPUTER_NUMBER) agentConfig.computer_number = String(process.env.CB_COMPUTER_NUMBER);
 if (process.env.CB_API_URL) agentConfig.api_url = process.env.CB_API_URL;
-if (process.env.CB_THEME) agentConfig.theme = process.env.CB_THEME; // test uchun tema override
+if (process.env.CB_THEME) agentConfig.theme = process.env.CB_THEME; // theme override for testing
 const API = agentConfig.api_url || 'http://localhost:3000/api';
 
-// Har PC alohida rate limit hisoblansin uchun har axios so'roviga X-CB-PC-ID header
+// X-CB-PC-ID header on every axios request, so rate limits are counted per PC
 axios.defaults.headers.common['X-CB-PC-ID'] = String(agentConfig.computer_id || '');
-// Agent secret — sessions.js dagi middleware talab qiladi
+// Agent secret — required by the middleware in sessions.js
 if (process.env.CB_AGENT_SECRET) agentConfig.agent_secret = process.env.CB_AGENT_SECRET;
 if (agentConfig.agent_secret) {
   axios.defaults.headers.common['X-Agent-Secret'] = String(agentConfig.agent_secret);
@@ -113,10 +113,10 @@ async function registerWithHub() {
 }
 
 // ── LICENSE VERIFICATION (Anti-piracy) ─────────────────────────────────────
-// Startup da server bilan tekshiradi. Server offline bo'lsa — cached
-// litsenziya bilan grace period (24 soat) ichida ishlashga ruxsat.
+// Checks with the server on startup. If the server is offline, the cached
+// license is allowed to run within a grace period (24 hours).
 const LICENSE_CACHE_FILE = () => path.join(app.getPath('userData'), 'license.json');
-const OFFLINE_GRACE_MS = 24 * 60 * 60 * 1000; // 24 soat
+const OFFLINE_GRACE_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function readLicenseCache() {
   try {
@@ -169,7 +169,7 @@ async function verifyLicense() {
     }, { timeout: 8000 });
 
     if (r.data?.valid) {
-      // Muvaffaqiyatli — cache yozib qo'yamiz (offline grace uchun)
+      // Success — write the cache (for the offline grace period)
       writeLicenseCache({
         ok: true,
         checked_at: Date.now(),
@@ -185,14 +185,14 @@ async function verifyLicense() {
     const reason = r.data?.reason || 'unknown';
     const msg = messages[reason] || `Litsenziya xatosi: ${reason}`;
     console.warn(`[license] Rad etildi: ${reason}`);
-    // hard fail — invalid_secret, hardware_mismatch, not_found — cache o'chirish
+    // hard fail — invalid_secret, hardware_mismatch, not_found — delete the cache
     if (['invalid_secret', 'hardware_mismatch', 'not_found'].includes(reason)) {
       try { fs.unlinkSync(LICENSE_CACHE_FILE()); } catch {}
     }
     await showLicenseErrorAndQuit(msg);
     return false;
   } catch (e) {
-    // Server yo'q — cached litsenziya bilan grace period
+    // No server — grace period with the cached license
     console.warn('[license] Server tekshiruvi o\'tmadi:', e.message);
     const cached = readLicenseCache();
     if (cached && cached.ok && cached.hardware_id === hardwareId) {
@@ -207,14 +207,14 @@ async function verifyLicense() {
       );
       return false;
     }
-    // Cache yo'q va server yo'q — birinchi startup online bo'lishi shart
+    // No cache and no server — the first startup must be online
     if (!cached) {
       await showLicenseErrorAndQuit(
         'Birinchi ishga tushirish uchun internet ulanish kerak. Server bilan aloqa yo\'q.'
       );
       return false;
     }
-    // Cached bor lekin hardware mos emas (klonlangan)
+    // Cache exists but the hardware doesn't match (cloned)
     await showLicenseErrorAndQuit(
       'Litsenziya boshqa kompyuterga bog\'langan (offline). Ruxsatsiz nusxa aniqlandi.'
     );
@@ -222,7 +222,7 @@ async function verifyLicense() {
   }
 }
 
-// ── SESSION FAYL (offline uchun) ───────────────────────────────────────────
+// ── SESSION FILE (for offline use) ─────────────────────────────────────────
 const sessionFile = path.join(app.getPath('userData'), 'cybernet_session.json');
 
 function readLocalSession() {
@@ -232,7 +232,7 @@ function readLocalSession() {
     const now = new Date();
     const remainingMs = endsAt - now;
     if (remainingMs > 0) return { ...data, remainingMs };
-    // Vaqt o'tib ketgan — faylni o'chiramiz
+    // Time has expired — delete the file
     fs.unlinkSync(sessionFile);
     return null;
   } catch {
@@ -250,21 +250,21 @@ function saveLocalSession(data) {
 
 function clearLocalSession() {
   try { fs.unlinkSync(sessionFile); } catch {}
-  // Sessiya tugaganda foydalanuvchi fayllarini tozalash
+  // Clean up user files when the session ends
   if (typeof cleanupUserFiles === 'function') cleanupUserFiles();
 }
 
 // ── MAIN WINDOW ────────────────────────────────────────────────────────────
 const isWindows = process.platform === 'win32';
 
-// ── WINDOWS STARTUP MUHITI (qora fon, ikonalar yashirish, tez start) ─────
+// ── WINDOWS STARTUP ENVIRONMENT (black background, hidden icons, fast start) ───
 function setupWindowsStartupEnv() {
   if (!isWindows) return;
 
-  // Desktop ikonalarini yashirish (fon rangiga tegmaymiz)
+  // Hide desktop icons (we don't touch the background color)
   exec('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced" /v HideIcons /t REG_DWORD /d 1 /f', { windowsHide: true });
 
-  // 3. Task Scheduler — Registry Run'dan tezroq ishga tushadi
+  // 3. Task Scheduler — starts faster than the Registry Run key
   const exePath = process.execPath;
   exec(
     `schtasks /Create /TN "CyberNetAgent" /TR "\\"${exePath}\\"" /SC ONLOGON /RL HIGHEST /F`,
@@ -276,7 +276,7 @@ function setupWindowsStartupEnv() {
   );
 }
 
-// ── WINDOWS TASKBAR YASHIRISH (SW_HIDE + Watch) ───────────────────────────
+// ── HIDE WINDOWS TASKBAR (SW_HIDE + Watch) ────────────────────────────────
 let taskbarWatcherProc = null;
 
 function getPs1Path(name) {
@@ -287,7 +287,7 @@ function getPs1Path(name) {
 
 function hideWindowsTaskbar() {
   if (!isWindows) return;
-  // Bir marta SW_HIDE
+  // SW_HIDE once
   exec(
     `powershell -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${getPs1Path('taskbar-toggle.ps1')}" -Mode hide`,
     { windowsHide: true },
@@ -296,7 +296,7 @@ function hideWindowsTaskbar() {
       else console.log('[taskbar] Windows taskbar yashirildi');
     }
   );
-  // Doimiy Watch jarayoni (250ms da tekshiradi)
+  // Persistent Watch process (checks every 250ms)
   if (!taskbarWatcherProc) {
     taskbarWatcherProc = exec(
       `powershell -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${getPs1Path('taskbar-toggle.ps1')}" -Mode watch`,
@@ -309,24 +309,24 @@ function hideWindowsTaskbar() {
 
 function restoreDesktopEnv() {
   if (!isWindows) return;
-  // Desktop ikonalarini qayta ko'rsatish
+  // Show desktop icons again
   exec('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced" /v HideIcons /t REG_DWORD /d 0 /f', { windowsHide: true });
-  // Explorer ni qayta ishga tushiramiz (ikonalar darhol ko'rinadi)
+  // Restart Explorer (icons appear immediately)
   exec('taskkill /F /IM explorer.exe & start explorer.exe', { windowsHide: true, shell: true });
 }
 
 function restoreWindowsTaskbar() {
   if (!isWindows) return;
-  // Watch jarayonini to'xtatamiz
+  // Stop the Watch process
   if (taskbarWatcherProc) { try { taskbarWatcherProc.kill(); } catch {} taskbarWatcherProc = null; }
-  // SW_SHOW bilan taskbarni qaytaramiz
+  // Bring the taskbar back with SW_SHOW
   exec(
     `powershell -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${getPs1Path('taskbar-toggle.ps1')}" -Mode show`,
     { windowsHide: true }
   );
 }
 
-// ── LAB APPS (backenddan olinadi) ─────────────────────────────────────────
+// ── LAB APPS (fetched from the backend) ───────────────────────────────────
 let labApps = [];
 
 async function fetchLabApps() {
@@ -358,15 +358,15 @@ function focusWindowByName(exeName, mode = 'once') {
   );
 }
 
-// Steam game ID larini exe nomiga moslashtirish (kill uchun kerak)
+// Map Steam game IDs to exe names (needed for kill)
 const STEAM_GAME_EXE = {
   '730': 'cs2.exe',          // CS2
   '570': 'dota2.exe',        // Dota 2
   '578080': 'PUBG.exe',      // PUBG
-  '1172470': 'Fortnite.exe', // Fortnite (Epic, lekin steam ID bor)
+  '1172470': 'Fortnite.exe', // Fortnite (Epic, but has a Steam ID)
   '252490': 'rust.exe',      // Rust
   '1091500': 'Cyberpunk2077.exe',
-  '1938090': 'cs2.exe',      // CS2 yangi ID
+  '1938090': 'cs2.exe',      // CS2 new ID
 };
 
 function launchApp(appPath, args, appName) {
@@ -374,15 +374,15 @@ function launchApp(appPath, args, appName) {
   const expanded = appPath.replace(/%([^%]+)%/g, (_, k) => process.env[k] || `%${k}%`);
   const argStr = args ? ` ${args}` : '';
   if (isWindows) {
-    // URL protokol (steam://, epic://, ...) — exe nomi boshqacha aniqlanadi
+    // URL protocols (steam://, epic://, ...) — the exe name is resolved differently
     const isUrl = /^[a-z][a-z0-9+\-.]*:\/\//i.test(expanded);
-    // Steam o'yini aniqlash: steam:// URL yoki yo'lda "steamapps" bor
+    // Detect a Steam game: steam:// URL or "steamapps" in the path
     const isSteamGame = isUrl
       ? /^steam:\/\//i.test(expanded)
       : /[\\/]steamapps[\\/]/i.test(expanded);
     let exeName, name;
     if (isUrl) {
-      // steam://rungameid/730 → gameId=730 → cs2.exe (yoki steam.exe fallback)
+      // steam://rungameid/730 → gameId=730 → cs2.exe (or steam.exe fallback)
       const steamId = expanded.match(/steam:\/\/rungameid\/(\d+)/i)?.[1];
       exeName = (steamId && STEAM_GAME_EXE[steamId]) || 'steam.exe';
       name = appName || exeName.replace('.exe', '');
@@ -392,18 +392,18 @@ function launchApp(appPath, args, appName) {
     }
     const exeKey = exeName.toLowerCase();
 
-    // Agar allaqachon ishga tushirilgan bo'lsa — faqat focus qilamiz
+    // If already launched — just focus it
     const already = launchedApps.find(a => a.exeName.toLowerCase() === exeKey);
     if (already) {
       focusWindowByName(exeName, 'once');
       return;
     }
-    // Rapid-click guard: bir xil oyinni 10s ichida qayta ishga tushirmaslik
+    // Rapid-click guard: don't relaunch the same game within 10s
     if (launchingExes.has(exeKey)) return;
     launchingExes.add(exeKey);
     setTimeout(() => launchingExes.delete(exeKey), 15000);
 
-    // O'yinni ishga tushirish funksiyasi (Steam tayyor bo'lgach yoki oddiy holatda)
+    // Game launch function (once Steam is ready, or in the normal case)
     const doLaunch = () => {
       const launchCmd = isUrl
         ? `cmd /c start "" "${expanded}"`
@@ -414,21 +414,21 @@ function launchApp(appPath, args, appName) {
       launchedApps.push({ name, exeName, launchedAt: Date.now() });
       launchedApps = launchedApps.filter(a => Date.now() - a.launchedAt < 4 * 3600000);
 
-      // Kiosk rejimni o'chirib, oynani yashiramiz — OS o'zi game'ga focus beradi
+      // Turn off kiosk mode and hide the window — the OS gives focus to the game itself
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.setKiosk(false);
         mainWindow.setFullScreen(false);
         mainWindow.setAlwaysOnTop(false);
-        mainWindow.hide(); // minimize() emas hide() — OS focus'ni o'yinga beradi
+        mainWindow.hide(); // hide(), not minimize() — the OS hands focus to the game
       }
-      // Alt+Tab blocker'ni o'chiramiz — o'yin oynayotganda native Windows Alt+Tab ishlaydi
+      // Turn off the Alt+Tab blocker — native Windows Alt+Tab works while gaming
       stopAltTabBlocker();
     };
 
-    // Steam o'yini bo'lsa — Steam ishlab turganini tekshiramiz.
-    // Steam ishlamayotgan bo'lsa avval uni ishga tushiramiz, IPC pipe tayyor
-    // bo'lgunga qadar 7 soniya kutamiz, keyin o'yinni ishga tushiramiz.
-    // Aks holda "Failed to connect with local Steam Client process" xato chiqadi.
+    // For Steam games — check that Steam is running.
+    // If Steam isn't running, start it first and wait 7 seconds until the IPC pipe
+    // is ready, then launch the game.
+    // Otherwise the "Failed to connect with local Steam Client process" error appears.
     if (isSteamGame) {
       exec('tasklist /FI "IMAGENAME eq steam.exe" /NH', { windowsHide: true }, (err, stdout) => {
         const steamRunning = !err && /steam\.exe/i.test(stdout || '');
@@ -436,9 +436,9 @@ function launchApp(appPath, args, appName) {
           doLaunch();
           return;
         }
-        // Steam ni fon rejimida ishga tushirish. -silent flag Steam oynasini
-        // ko'rsatmaydi (tray'ga tushadi), foydalanuvchi to'g'ridan-to'g'ri o'yinga o'tadi.
-        // Steam yo'lini registry orqali topamiz, topilmasa PATH orqali "steam" chaqiramiz.
+        // Start Steam in the background. The -silent flag doesn't show the Steam
+        // window (it goes to the tray), so the user goes straight into the game.
+        // Find the Steam path via the registry; if not found, call "steam" via PATH.
         const steamPathCmd = 'reg query "HKCU\\Software\\Valve\\Steam" /v SteamExe';
         exec(steamPathCmd, { windowsHide: true }, (regErr, regOut) => {
           let steamExe = 'steam';
@@ -447,7 +447,7 @@ function launchApp(appPath, args, appName) {
           const startSteamCmd = `cmd /c start "" "${steamExe}" -silent`;
           exec(startSteamCmd, { windowsHide: true }, (sErr) => {
             if (sErr) console.warn('[launcher] Steam ishga tushmadi:', sErr.message);
-            // Steam IPC pipe tayyor bo'lishi uchun 7 soniya kutamiz
+            // Wait 7 seconds for the Steam IPC pipe to be ready
             console.log('[launcher] Steam ishga tushirildi, IPC tayyor bo\'lishi uchun 7s kutamiz...');
             setTimeout(doLaunch, 7000);
           });
@@ -456,7 +456,7 @@ function launchApp(appPath, args, appName) {
       return;
     }
 
-    // Oddiy exe yoki Steam bo'lmagan URL (masalan, epic://) — to'g'ridan-to'g'ri
+    // Plain exe or non-Steam URL (e.g. epic://) — launch directly
     doLaunch();
   }
 }
@@ -469,7 +469,7 @@ let appSwitcherWin = null;
 
 function createAppSwitcherWin() {
   appSwitcherWin = new BrowserWindow({
-    fullscreen: true,          // taskbar ni to'liq yashiradi (Windows standart xulq)
+    fullscreen: true,          // fully hides the taskbar (standard Windows behavior)
     frame: false, transparent: true,
     alwaysOnTop: true, focusable: true,
     skipTaskbar: true, resizable: false, movable: false,
@@ -517,7 +517,7 @@ function startAltTabBlocker() {
     (err) => { if (err?.code) console.warn('[alttab] blocker xato:', err.message); }
   );
 
-  // Tab bosilishi — switcherni ko'rsatish
+  // Tab pressed — show the switcher
   setInterval(() => {
     try {
       const sig = fs.readFileSync(altTabSignalFile, 'utf8').trim();
@@ -525,7 +525,7 @@ function startAltTabBlocker() {
     } catch {}
   }, 80);
 
-  // Alt qo'yib yuborilishi — switcher ochiq bo'lsa asosiy jarayondan tanlov
+  // Alt released — if the switcher is open, select in the main process
   setInterval(() => {
     try {
       const sig = fs.readFileSync(altUpSignalFile, 'utf8').trim();
@@ -579,18 +579,18 @@ let mainWindow;
 let syncInterval;
 
 function createWindow() {
-  // Env yo'q bo'lsa — Mac'da haqiqiy ekran o'lchamini olib maximize qilamiz
-  // (10 PC simulyator uchun kichik oynalar CB_WIN_W/H orqali beriladi)
+  // No env — on Mac, get the real screen size and maximize
+  // (small windows for the 10-PC simulator are given via CB_WIN_W/H)
   const { screen } = require('electron');
   const primary = screen.getPrimaryDisplay();
-  // Windows'da bounds (to'liq ekran, taskbar ham kiradi), Mac'da workAreaSize
+  // On Windows use bounds (full screen, including the taskbar), on Mac workAreaSize
   const defaultW = isWindows ? primary.bounds.width  : primary.workAreaSize.width;
   const defaultH = isWindows ? primary.bounds.height : primary.workAreaSize.height;
   const winW = Number(process.env.CB_WIN_W) || defaultW;
   const winH = Number(process.env.CB_WIN_H) || defaultH;
   const winX = process.env.CB_WIN_X != null ? Number(process.env.CB_WIN_X) : undefined;
   const winY = process.env.CB_WIN_Y != null ? Number(process.env.CB_WIN_Y) : undefined;
-  // Mac'da ham env berilmagan bo'lsa fullscreen kiosk (test simulyator uchun CB_WIN_W berish)
+  // On Mac too, fullscreen kiosk if no env is given (pass CB_WIN_W for the test simulator)
   const forceFullscreen = !isWindows && !process.env.CB_WIN_W;
   mainWindow = new BrowserWindow({
     width: winW, height: winH,
@@ -629,7 +629,7 @@ function createWindow() {
       })();
     `);
     const [w, h] = mainWindow.getSize();
-    // Zoom factor va viewport'ni diagnostika + majburiy 1.0
+    // Zoom factor and viewport diagnostics + force 1.0
     try {
       mainWindow.webContents.setZoomFactor(1);
       const info = await mainWindow.webContents.executeJavaScript(`
@@ -650,7 +650,7 @@ function createWindow() {
     if (isWindows && !allowQuit) e.preventDefault();
   });
 
-  // Settings yoki o'yin yopilganda GL qaytib fokusga olinganda kiosk tiklanadi
+  // When GL regains focus after Settings or a game closes, kiosk mode is restored
   mainWindow.on('focus', () => {
     if (isWindows && !mainWindow.isKiosk()) {
       mainWindow.setFullScreen(true);
@@ -661,32 +661,32 @@ function createWindow() {
   });
 
   loadActiveTheme();
-  // Renderer log/xato larni ushlash — barchasini stdout ga chiqaramiz
+  // Capture renderer logs/errors — print them all to stdout
   mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
-    // Electron 42: birinchi arg — event, keyin level/message/line/source
-    // Ba'zi versiyalarda: (event) obj bo'ladi
+    // Electron 42: the first arg is the event, then level/message/line/source
+    // In some versions: an (event) object
     if (typeof event === 'object' && event !== null && 'message' in event) {
       console.log(`[renderer L${event.level}] ${event.message}`);
     } else {
       console.log(`[renderer L${level}] ${message}`);
     }
   });
-  // Debug uchun DevTools ni Mac'da avtomatik ochamiz (Windows kiosk emas)
-  // CB_NO_DEVTOOLS=1 bo'lsa test/simulyator uchun DevTools ochilmaydi
+  // Open DevTools automatically on Mac for debugging (Windows is kiosk)
+  // With CB_NO_DEVTOOLS=1, DevTools don't open (for test/simulator)
   if (!isWindows && !process.env.CB_NO_DEVTOOLS) {
     mainWindow.webContents.once('did-finish-load', () => {
       mainWindow.webContents.openDevTools({ mode: 'detach' });
     });
   }
   mainWindow.webContents.on('did-finish-load', () => {
-    // Windows da kiosk/fullscreen majburan qo'llaymiz (DPI scaling muammolarini hal qiladi)
+    // Force kiosk/fullscreen on Windows (fixes DPI scaling issues)
     if (isWindows) {
       mainWindow.setFullScreen(true);
       mainWindow.setKiosk(true);
       mainWindow.focus();
       hideWindowsTaskbar();
-      // Taskbar yashirilgandan keyin oyna to'liq display bounds ni egallasin
-      // (taskbar o'ng tomonda bo'lsa kiosk uni hisobga olmay o'ng tomonida bo'shliq qoldiradi)
+      // After the taskbar is hidden, the window should fill the full display bounds
+      // (if the taskbar is on the right, kiosk ignores it and leaves a gap on the right)
       setTimeout(() => {
         if (mainWindow && !mainWindow.isDestroyed()) {
           const { screen: s } = require('electron');
@@ -698,45 +698,45 @@ function createWindow() {
         }
       }, 600);
     }
-    // Barcha temalarda to'liq backend mantiqni ishga tushiramiz.
-    // HUD → renderer/index.html o'z ichida IPC lar bilan ishlaydi.
-    // design1..design10 → renderer/themes/_bridge.js orqali xuddi shu IPC lar bilan.
+    // Run the full backend logic in all themes.
+    // HUD → renderer/index.html works with IPC internally.
+    // design1..design10 → via renderer/themes/_bridge.js with the same IPC.
     setTimeout(() => checkSession(), 600);
     startBackgroundSync();
     startHeartbeat();
     startCommandPoll();
     startSessionWatcher();
     startQrLoop();
-    // Bootup da darhol tema tekshiruvi (60s kutmaymiz)
+    // Check the theme immediately on boot (don't wait 60s)
     setTimeout(() => syncThemeFromServer(), 1500);
-    // Tema HTML larining auto-update: bootup da darhol + har 5 daq
+    // Theme HTML auto-update: immediately on boot + every 5 min
     setTimeout(() => syncThemesManifest(), 3000);
     startThemesAutoUpdate();
-    // Backenddan ilovalar ro'yxatini olish + har 5 daqiqada yangilash
+    // Fetch the app list from the backend + refresh every 5 minutes
     fetchLabApps();
     setInterval(() => fetchLabApps(), 5 * 60 * 1000);
-    // Anti-cheat: jarayon kuzatuvi + yuklamalar papkasi tozalash
+    // Anti-cheat: process monitoring + downloads folder cleanup
     startAntiCheat();
-    // Disk bo'shlig'ini kuzatish
+    // Monitor free disk space
     startDiskMonitor();
   });
 
   registerSecurityShortcuts();
 }
 
-// ── TEMA YUKLASH ───────────────────────────────────────────────────────────
-// Prioritet: userData/themes-cache (yangi versiya) → renderer/themes (o'rnatilgan) → HUD
+// ── THEME LOADING ──────────────────────────────────────────────────────────
+// Priority: userData/themes-cache (new version) → renderer/themes (installed) → HUD
 function ensureBridgeInCache() {
-  // Har cache load'dan oldin bridge.js ni o'rnatilgan renderer/themes/ dan
-  // themes-cache/ ga nusxalab qo'yamiz. Yangi tema HTML lari (_bridge.js) ga
-  // relativ havola qiladi, shuning uchun u yerda mavjud bo'lishi kerak.
+  // Before every cache load, copy bridge.js from the installed renderer/themes/
+  // into themes-cache/. New theme HTML files reference _bridge.js
+  // relatively, so it must exist there.
   try {
     const src = path.join(__dirname, 'renderer', 'themes', '_bridge.js');
     const dstDir = path.join(app.getPath('userData'), 'themes-cache');
     const dst = path.join(dstDir, '_bridge.js');
     if (!fs.existsSync(src)) return;
     if (!fs.existsSync(dstDir)) fs.mkdirSync(dstDir, { recursive: true });
-    // Faqat o'zgargan bo'lsa yangilaymiz
+    // Update only if changed
     let needCopy = true;
     if (fs.existsSync(dst)) {
       const s = fs.statSync(src);
@@ -755,12 +755,12 @@ function loadActiveTheme() {
     return mainWindow.loadFile('renderer/index.html');
   }
   ensureBridgeInCache();
-  // Auto-update dan olingan versiyani birinchi tekshiramiz
+  // Check the auto-updated version first
   const cachedPath = path.join(app.getPath('userData'), 'themes-cache', `${theme}.html`);
   if (fs.existsSync(cachedPath)) {
     return mainWindow.loadFile(cachedPath);
   }
-  // Fallback: dastur bilan o'rnatilgan asl versiya
+  // Fallback: the original version installed with the app
   const bundledPath = path.join(__dirname, 'renderer', 'themes', `${theme}.html`);
   if (fs.existsSync(bundledPath)) {
     return mainWindow.loadFile(`renderer/themes/${theme}.html`);
@@ -784,12 +784,12 @@ function setTheme(themeName) {
   if (prev !== themeName) loadActiveTheme();
 }
 
-// startThemeSyncOnly() endi ishlatilmaydi — barcha temalarda startBackgroundSync
-// tema tekshirishni ham o'z ichiga oladi. themeOnlyInterval faqat legacy cleanup uchun.
+// startThemeSyncOnly() is no longer used — startBackgroundSync covers theme checks
+// in all themes. themeOnlyInterval is only for legacy cleanup.
 let themeOnlyInterval;
 
-// ── TEMA HTML AUTO-UPDATE (har 5 daqiqada) ─────────────────────────────────
-// Klub egasi yangi dizayn HTML yuklasa, barcha PClar avtomatik yuklab oladi
+// ── THEME HTML AUTO-UPDATE (every 5 minutes) ───────────────────────────────
+// When the club owner uploads a new design HTML, all PCs download it automatically
 let themeManifestInterval;
 const THEMES_CACHE_DIR = () => path.join(app.getPath('userData'), 'themes-cache');
 const LOCAL_MANIFEST_FILE = () => path.join(THEMES_CACHE_DIR(), 'manifest.json');
@@ -858,26 +858,26 @@ async function syncThemesManifest() {
       writeLocalManifest(localManifest);
     }
 
-    // Aktiv tema yangilangan bo'lsa, oyna qayta yuklash
+    // If the active theme was updated, reload the window
     if (activeThemeUpdated && activeTheme !== 'hud') {
       console.log('[themes-cache] Aktiv tema yangilandi, qayta yuklanmoqda');
       loadActiveTheme();
     }
   } catch {
-    // Server bilan aloqa yo'q — indamay o'tamiz
+    // No connection to the server — skip silently
   }
 }
 
 function startThemesAutoUpdate() {
   clearInterval(themeManifestInterval);
-  themeManifestInterval = setInterval(() => syncThemesManifest(), 5 * 60 * 1000); // 5 daqiqa
+  themeManifestInterval = setInterval(() => syncThemesManifest(), 5 * 60 * 1000); // 5 minutes
 }
 
-// ── SERVERDAN TEMA SINXRONIZATSIYASI ───────────────────────────────────────
-// Klub egasi admin paneldan tema o'zgartirsa, barcha PClar avtomatik olish
+// ── THEME SYNC FROM THE SERVER ─────────────────────────────────────────────
+// When the club owner changes the theme in the admin panel, all PCs pick it up automatically
 async function syncThemeFromServer() {
   if (!agentConfig.lab_id) return;
-  if (process.env.CB_THEME) return; // env override — server temasini e'tibordan chetda qoldiramiz
+  if (process.env.CB_THEME) return; // env override — ignore the server theme
   try {
     const { data } = await axios.get(
       `${API}/labs/${agentConfig.lab_id}/theme`,
@@ -889,7 +889,7 @@ async function syncThemeFromServer() {
       setTheme(serverTheme);
     }
   } catch (e) {
-    // Server bilan aloqa yo'q — indamay o'tamiz (offline)
+    // No connection to the server — skip silently (offline)
   }
 }
 
@@ -898,7 +898,7 @@ function openThemePicker() {
   mainWindow.loadFile('renderer/theme-picker.html');
 }
 
-// ── OVERLAY (qolgan vaqt — Ctrl+Tab) ──────────────────────────────────────
+// ── OVERLAY (remaining time — Ctrl+Tab) ───────────────────────────────────
 let overlayWindow = null;
 let overlayHideTimer = null;
 let lastSessionData = null;
@@ -906,23 +906,23 @@ let lastSessionData = null;
 function createOverlay() {
   overlayWindow = new BrowserWindow({
     width: 280, height: 100,
-    x: undefined, // screen ning o'ng-yuqorisida
+    x: undefined, // top-right of the screen
     y: 12,
     frame: false, transparent: true,
     alwaysOnTop: true,
-    focusable: false,        // foydalanuvchi o'tolmaydi
-    skipTaskbar: true,       // taskbar'da ko'rinmaydi
+    focusable: false,        // the user can't focus it
+    skipTaskbar: true,       // not shown in the taskbar
     resizable: false, movable: false, minimizable: false, closable: false,
     show: false,
     hasShadow: false,
     webPreferences: { nodeIntegration: true, contextIsolation: false },
   });
   overlayWindow.loadFile('renderer/overlay.html');
-  overlayWindow.setIgnoreMouseEvents(true, { forward: false }); // mishka o'tib ketadi
+  overlayWindow.setIgnoreMouseEvents(true, { forward: false }); // the mouse passes through
   overlayWindow.setAlwaysOnTop(true, 'screen-saver');
   overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 
-  // Screen o'ng-yuqorisiga joylash
+  // Position at the top-right of the screen
   const { screen } = require('electron');
   const display = screen.getPrimaryDisplay();
   overlayWindow.setBounds({
@@ -934,7 +934,7 @@ function createOverlay() {
 
 function showOverlay() {
   if (!overlayWindow || overlayWindow.isDestroyed()) createOverlay();
-  // Lokal sessiyani yuborish
+  // Send the local session
   const local = readLocalSession();
   const data = local ? { endsAt: local.ends_at, packageName: local.package_name } : null;
   if (overlayWindow.webContents.isLoading()) {
@@ -944,7 +944,7 @@ function showOverlay() {
   } else {
     overlayWindow.webContents.send('overlay-update', data);
   }
-  overlayWindow.showInactive(); // focus stealing yo'q
+  overlayWindow.showInactive(); // no focus stealing
   clearTimeout(overlayHideTimer);
   overlayHideTimer = setTimeout(() => {
     if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) {
@@ -962,7 +962,7 @@ function toggleOverlay() {
   }
 }
 
-// ── VAQT OVERLAY (Alt+Tab) ────────────────────────────────────────────────
+// ── TIME OVERLAY (Alt+Tab) ────────────────────────────────────────────────
 let timeOverlayWin = null;
 
 function createTimeOverlay() {
@@ -989,7 +989,7 @@ function createTimeOverlay() {
 function showTimeOverlay() {
   if (!timeOverlayWin || timeOverlayWin.isDestroyed()) createTimeOverlay();
   const local = readLocalSession();
-  if (!local) return; // Sessiya yo'q — ko'rsatmaymiz
+  if (!local) return; // No session — don't show
   const remainingMs = local.ends_at
     ? Math.max(0, new Date(local.ends_at) - Date.now())
     : 0;
@@ -1019,45 +1019,45 @@ function toggleTimeOverlay() {
 
 ipcMain.on('hide-time-overlay', hideTimeOverlay);
 
-// ── XAVFSIZLIK SHORTCUTLARI ────────────────────────────────────────────────
+// ── SECURITY SHORTCUTS ─────────────────────────────────────────────────────
 function registerSecurityShortcuts() {
   const toBlock = [
-    'Alt+F4',         // Oynani yopish
-    'Ctrl+Escape',    // Start menyu
-    'Super+D',        // Ish stolini ko'rsatish
-    'Super+L',        // Ekranni qulflash
+    'Alt+F4',         // Close window
+    'Ctrl+Escape',    // Start menu
+    'Super+D',        // Show desktop
+    'Super+L',        // Lock screen
     'Super+Tab',      // Task view
     'Super+E',        // Explorer
     'Super+R',        // Run dialog
-    'Super+F',        // Qidirish
+    'Super+F',        // Search
     'Super+I',        // Settings
-    'Super+P',        // Proyektor
-    'Ctrl+Shift+Esc', // Task Manager (to'g'ridan)
+    'Super+P',        // Projector
+    'Ctrl+Shift+Esc', // Task Manager (direct)
     'F11',            // Fullscreen toggle
     'F12',            // DevTools
-    'Ctrl+Shift+I',   // DevTools (Chrome usuli)
+    'Ctrl+Shift+I',   // DevTools (Chrome style)
     'Ctrl+Shift+J',   // Console
-    'Super',          // Windows key (Start menyu)
+    'Super',          // Windows key (Start menu)
   ];
 
   toBlock.forEach(sc => {
     try { globalShortcut.register(sc, () => {}); } catch (_) {}
   });
 
-  // Alt+Tab → WH_KEYBOARD_LL blocker orqali hal qilinadi (startAltTabBlocker)
-  // globalShortcut.register('Alt+Tab') Windows'da ishlamaydi — system hotkey
+  // Alt+Tab → handled by the WH_KEYBOARD_LL blocker (startAltTabBlocker)
+  // globalShortcut.register('Alt+Tab') doesn't work on Windows — it's a system hotkey
 
-  // Ctrl+Tab → app switcher (zahira hotkey)
+  // Ctrl+Tab → app switcher (fallback hotkey)
   try {
     globalShortcut.register('Control+Tab', () => showAppSwitcher());
   } catch (_) {}
 
-  // Tema tanlash (klub egasi uchun) — Ctrl+Shift+Alt+T
+  // Theme picker (for the club owner) — Ctrl+Shift+Alt+T
   try {
     globalShortcut.register('Control+Shift+Alt+T', () => openThemePicker());
   } catch (_) {}
 
-  // Admin chiqish — Ctrl+Shift+Alt+X → parol so'raydi
+  // Admin exit — Ctrl+Shift+Alt+X → asks for a password
   try {
     globalShortcut.register('Control+Shift+Alt+X', () => {
       if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -1066,23 +1066,23 @@ function registerSecurityShortcuts() {
   } catch (_) {}
 }
 
-// ── SESSION TEKSHIRUVI ─────────────────────────────────────────────────────
+// ── SESSION CHECK ──────────────────────────────────────────────────────────
 async function checkSession() {
   const local = readLocalSession();
 
   if (local) {
-    // Lokal sessiya bor — darhol resumeqilamiz (oflayn bo'lsa ham)
+    // A local session exists — resume immediately (even offline)
     mainWindow.webContents.send('session-resume', {
       session: local,
       remainingMs: local.remainingMs,
     });
 
-    // Backendni fon rejimida tekshiramiz
+    // Check the backend in the background
     verifyWithBackend(local).catch(() => {});
     return;
   }
 
-  // Lokal yo'q — backenddan so'raymiz
+  // No local session — ask the backend
   try {
     const { data: session } = await axios.get(
       `${API}/sessions/computer/${agentConfig.computer_id}/active`,
@@ -1096,44 +1096,44 @@ async function checkSession() {
         mainWindow.webContents.send('session-resume', { session, remainingMs });
         return;
       }
-      // Vaqt tugab ketgan
+      // Time has run out
       await axios.post(`${API}/sessions/${session.id}/force-end`).catch(() => {});
     }
   } catch {
-    // Backend mavjud emas — lock screen ko'rsatamiz
+    // Backend unavailable — show the lock screen
   }
 
   mainWindow.webContents.send('session-none');
 }
 
-// Backend bilan sinxronlashtirish (fon rejimida)
+// Sync with the backend (in the background)
 async function verifyWithBackend(local) {
   const { data: apiSession } = await axios.get(
     `${API}/sessions/computer/${agentConfig.computer_id}/active`,
     { timeout: 5000 }
   );
 
-  // Admin sessiyani to'xtatgan bo'lsa
+  // If the admin stopped the session
   if (!apiSession || apiSession.id !== local.session_id) {
     clearLocalSession();
-    // Faqat real foydalanuvchi sessiyalari uchun "admin tugatdi" xabari
+    // "Admin ended it" message only for real user sessions
     if (local.user_id) {
       mainWindow.webContents.send('session-ended-remotely');
     } else {
       mainWindow.webContents.send('session-none');
     }
   } else {
-    // Sessiya hali aktiv — local cache ni yangi ma'lumotlar bilan yangilaymiz
+    // Session still active — update the local cache with the new data
     const remainingMs = Math.max(0, new Date(apiSession.ends_at) - new Date());
     saveLocalSession({ ...apiSession, session_id: apiSession.id, remainingMs });
-    // Balansni yangilaymiz (wallet + lab_balance)
+    // Update the balance (wallet + lab_balance)
     mainWindow.webContents.send('balance-update', {
       user_balance: apiSession.user_balance,
       lab_balance: apiSession.lab_balance,
     });
   }
 
-  // Admin xabarlarini tekshirish
+  // Check admin messages
   try {
     const { data: messages } = await axios.get(
       `${API}/sessions/computer/${agentConfig.computer_id}/messages`,
@@ -1145,16 +1145,16 @@ async function verifyWithBackend(local) {
   } catch {}
 }
 
-// ── FON SINXRONIZATSIYASI (60s) ────────────────────────────────────────────
+// ── BACKGROUND SYNC (60s) ──────────────────────────────────────────────────
 function startBackgroundSync() {
   clearInterval(syncInterval);
   syncInterval = setInterval(async () => {
-    // Tema sinxronizatsiyasi — sessiya bor/yo'q har doim (lock screenda ham)
+    // Theme sync — always, with or without a session (on the lock screen too)
     syncThemeFromServer();
 
     const local = readLocalSession();
     if (!local) {
-      // Sessiya yo'q — mobildan yangi sessiya boshlangan bo'lishi mumkin
+      // No session — a new session may have been started from mobile
       checkSession();
       return;
     }
@@ -1168,7 +1168,7 @@ function startBackgroundSync() {
   }, 60000);
 }
 
-// ── AGENT HEARTBEAT (har 30s) ─────────────────────────────────────────────
+// ── AGENT HEARTBEAT (every 30s) ───────────────────────────────────────────
 let heartbeatInterval;
 
 function startHeartbeat() {
@@ -1189,7 +1189,7 @@ function startHeartbeat() {
   }, 30000);
 }
 
-// ── BUYRUQLARNI BAJARISH ──────────────────────────────────────────────────
+// ── EXECUTE COMMANDS ──────────────────────────────────────────────────────
 let commandInterval;
 
 async function executeCommand(cmd) {
@@ -1241,7 +1241,7 @@ async function executeCommand(cmd) {
   }
 }
 
-// ── SESSIYA KUZATUVCHI (10s) — mobildan boshlangan sessiyani aniqlash ──────
+// ── SESSION WATCHER (10s) — detect sessions started from mobile ────────────
 let sessionWatcherInterval;
 function startSessionWatcher() {
   clearInterval(sessionWatcherInterval);
@@ -1315,10 +1315,10 @@ function startQrLoop() {
   qrPollInterval = setInterval(pollPending, 5000);
 }
 
-// ── IPC HANDLERLARI ────────────────────────────────────────────────────────
+// ── IPC HANDLERS ───────────────────────────────────────────────────────────
 ipcMain.handle('get-config', () => agentConfig);
 
-// Tizim ovoz balandligi — olish
+// System volume — get
 ipcMain.handle('get-volume', () => new Promise(resolve => {
   if (!isWindows) return resolve(50);
   exec(
@@ -1329,7 +1329,7 @@ ipcMain.handle('get-volume', () => new Promise(resolve => {
   );
 }));
 
-// Tizim ovoz balandligi — o'rnatish (0-100)
+// System volume — set (0-100)
 ipcMain.handle('set-volume', (_, pct) => {
   if (!isWindows) return;
   const v = Math.max(0, Math.min(100, parseInt(pct) || 0));
@@ -1340,7 +1340,7 @@ ipcMain.handle('set-volume', (_, pct) => {
   );
 });
 
-// Sichqoncha sozlamalarini ochish (faqat sichqoncha — xavfsiz)
+// Open mouse settings (mouse only — safe)
 ipcMain.handle('open-os-settings', (_, kind) => {
   try {
     if (process.platform === 'win32' && kind === 'mouse') {
@@ -1393,7 +1393,7 @@ ipcMain.on('force-end-session', async (_, sessionId) => {
   clearLocalSession();
 });
 
-// Tema tanlash (theme-picker.html dan chaqiriladi)
+// Theme selection (called from theme-picker.html)
 ipcMain.handle('set-theme', (_, themeName) => {
   setTheme(themeName);
   return true;
@@ -1403,17 +1403,17 @@ ipcMain.handle('get-theme', () => agentConfig.theme || 'hud');
 
 ipcMain.on('open-theme-picker', () => openThemePicker());
 
-// ── TRAILER LOKAL KESH ────────────────────────────────────────────────────
-// Foydalanuvchi tanlagan o'yinlar trailerlari birinchi run da serverdan
-// yuklanadi va userData/trailers-cache/ ga saqlanadi. Keyingi barcha
-// hover larda file:// dan o'ynaydi — server murojat yo'q.
+// ── TRAILER LOCAL CACHE ───────────────────────────────────────────────────
+// Trailers of games the user selected are downloaded from the server on the first run
+// and saved to userData/trailers-cache/. All subsequent
+// hovers play from file:// — no server requests.
 
 let _trailerCacheDir = null;
 function getTrailerCacheDir() {
   if (!_trailerCacheDir) {
     _trailerCacheDir = path.join(app.getPath('userData'), 'trailers-cache');
     fs.mkdirSync(_trailerCacheDir, { recursive: true });
-    // Yarim yuklangan .tmp fayllarni tozalash
+    // Clean up half-downloaded .tmp files
     try {
       fs.readdirSync(_trailerCacheDir)
         .filter(f => f.endsWith('.tmp'))
@@ -1454,7 +1454,7 @@ function downloadTrailerFile(url, destPath) {
   });
 }
 
-// Keshda bor trailerlar: { 'cs2.mp4': 'file:///...', ... }
+// Cached trailers: { 'cs2.mp4': 'file:///...', ... }
 ipcMain.handle('get-cached-trailers', () => {
   const dir = getTrailerCacheDir();
   const cached = {};
@@ -1468,7 +1468,7 @@ ipcMain.handle('get-cached-trailers', () => {
   return cached;
 });
 
-// Background da yuklab saqlaydi (3 ta parallel)
+// Downloads and saves in the background (3 in parallel)
 ipcMain.handle('cache-trailers', async (event, trailers) => {
   const dir = getTrailerCacheDir();
   const pending = trailers.filter(({ filename }) => !fs.existsSync(path.join(dir, filename)));
@@ -1488,7 +1488,7 @@ ipcMain.handle('cache-trailers', async (event, trailers) => {
   return { ok: true, downloaded: pending.length };
 });
 
-// Admin chiqish (parol tekshiruvi bilan)
+// Admin exit (with password check)
 ipcMain.handle('admin-verify', (_, password) => {
   return password === agentConfig.exit_password;
 });
@@ -1512,7 +1512,7 @@ ipcMain.handle('admin-exit', (_, password) => {
   return false;
 });
 
-// Focus ring'ni o'chirish uchun Chromium-level switch
+// Chromium-level switch to disable the focus ring
 app.commandLine.appendSwitch('disable-features', 'CSSFocusVisible');
 app.commandLine.appendSwitch('blink-settings', 'focusRingWidth=0');
 
@@ -1521,8 +1521,8 @@ let allowQuit = false;
 let sessionEndedForQuit = false;
 
 // ── RELAUNCH UPDATE ──────────────────────────────────────────────────────────
-// Installer yuklab C:\Windows\Temp ga saqlaydi, SYSTEM ONSTART task yaratadi,
-// PC ni reboot qiladi. Boot'da NSIS lock yo'q holatda o'rnatiladi.
+// Downloads the installer to C:\Windows\Temp, creates a SYSTEM ONSTART task,
+// reboots the PC. On boot it installs without the NSIS lock.
 let _updateInProgress = false;
 function relaunchUpdate(customUrl) {
   if (_updateInProgress) { console.log('[update] Yangilanish allaqachon davom etmoqda, o\'tkazib yuborildi'); return; }
@@ -1530,7 +1530,7 @@ function relaunchUpdate(customUrl) {
   _updateInProgress = true;
   const setupUrl = customUrl || 'https://example.com/downloads/CyberNet-Agent-Setup-latest.exe';
   const uid = Date.now();
-  // C:\Windows\Temp — reboot dan keyin ham o'chib ketmaydi
+  // C:\Windows\Temp — not deleted even after a reboot
   const sysTemp = 'C:\\Windows\\Temp';
   const tmp = path.join(sysTemp, `cybernet-setup-${uid}.exe`);
   const launcherPs = path.join(sysTemp, `cybernet-launcher-${uid}.ps1`);
@@ -1554,7 +1554,7 @@ function relaunchUpdate(customUrl) {
       const launcherEsc = launcherPs.replace(/'/g, "''");
       const triggerEsc = triggerPs.replace(/'/g, "''");
 
-      // Boot'da SYSTEM sifatida ishlaydigan script — exe lock yo'q
+      // Script that runs as SYSTEM on boot — no exe lock
       const launcherScript = [
         '$ErrorActionPreference = "SilentlyContinue"',
         `Start-Process -FilePath '${tmpEsc}' -ArgumentList '/S /allusers' -Wait`,
@@ -1564,7 +1564,7 @@ function relaunchUpdate(customUrl) {
       ].join('\r\n');
       fs.writeFileSync(launcherPs, launcherScript, 'utf8');
 
-      // Hozir ishlaydigan trigger: task yaratib, reboot qiladi
+      // Current trigger: creates the task and reboots
       const launcherArg = `-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File '${launcherEsc.replace(/'/g, "''")}'`;
       const triggerScript = [
         '$ErrorActionPreference = "SilentlyContinue"',
@@ -1598,14 +1598,14 @@ function relaunchUpdate(customUrl) {
 }
 
 // ── AUTO-UPDATER ────────────────────────────────────────────────────────────
-// Yangilanish faqat server tomonidan force_update komandasi orqali boshlanadi.
-// PC lar o'z-o'zidan tekshirmaydi — server yangi versiya chiqarganida push qiladi.
+// Updates start only via a force_update command from the server.
+// PCs don't check on their own — the server pushes when it releases a new version.
 function setupAutoUpdater() {
-  // Polling o'chirilgan — relaunchUpdate() force_update komandasi orqali chaqiriladi
+  // Polling disabled — relaunchUpdate() is called via the force_update command
 }
 
 app.whenReady().then(async () => {
-  // ── LICENSE TEKSHIRUVI ─────────────────────────────────────────────────
+  // ── LICENSE CHECK ──────────────────────────────────────────────────────
   if (agentConfig.computer_id && agentConfig.lab_id) {
     try {
       const r = await axios.post(`${API}/agent/verify-license`, {
@@ -1638,14 +1638,14 @@ app.whenReady().then(async () => {
 
   if (isWindows) {
     setupWindowsStartupEnv();
-    // Electron built-in (packaged app uchun)
+    // Electron built-in (for the packaged app)
     app.setLoginItemSettings({
       openAtLogin: true,
       openAsHidden: false,
       name: 'CyberNet Agent',
       path: process.execPath,
     });
-    // Registry backup (dev + packaged ikkalasida ham ishlaydi)
+    // Registry backup (works in both dev and packaged)
     const exePath = process.execPath.replace(/\\/g, '\\\\');
     exec(
       `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "CyberNetAgent" /t REG_SZ /d "\\"${exePath}\\"" /f`,
@@ -1660,7 +1660,7 @@ app.whenReady().then(async () => {
   startAltTabBlocker();
   setupAutoUpdater();
   setTimeout(registerWithHub, 4000);
-  // Barcha o'yinlarni (Steam + lokal) 30 soniya ichida skanerlash va serverga yuborish
+  // Scan all games (Steam + local) within 30 seconds and send them to the server
   setTimeout(async () => {
     try {
       const steam = discoverSteamGames();
@@ -1680,7 +1680,7 @@ app.whenReady().then(async () => {
   }, 30000);
 });
 
-// Jarayon haqiqatan yo'qligini tasklist orqali tekshirish (600ms kutgandan keyin)
+// Verify via tasklist that the process is really gone (after waiting 600ms)
 function isProcessRunning(exeName) {
   return new Promise((resolve) => {
     exec(
@@ -1694,21 +1694,21 @@ function isProcessRunning(exeName) {
   });
 }
 
-// Ilova yopilganda launcherni qaytarish — Chrome single-instance ni ham to'g'ri hal qiladi
+// Restore the launcher when an app closes — also handles Chrome single-instance correctly
 async function monitorAndRestoreLauncher(exeName) {
   if (!isWindows) return;
-  // Ilova ishga tushishi uchun biroz kutamiz
+  // Wait a little for the app to start
   await new Promise(r => setTimeout(r, 2000));
-  // Har 1.5s da jarayonni kuzatamiz
+  // Watch the process every 1.5s
   const poll = async () => {
     const running = await isProcessRunning(exeName);
     if (!running) {
-      // 600ms kutiamiz — single-instance handoff tugashi uchun
+      // Wait 600ms — for the single-instance handoff to finish
       await new Promise(r => setTimeout(r, 600));
-      // Yana tekshiramiz
+      // Check again
       const stillRunning = await isProcessRunning(exeName);
       if (!stillRunning) {
-        // Jarayon haqiqatan yo'q — launchedApps dan o'chiramiz
+        // The process is really gone — remove it from launchedApps
         launchedApps = launchedApps.filter(
           a => a.exeName.toLowerCase() !== exeName.toLowerCase()
         );
@@ -1748,7 +1748,7 @@ ipcMain.handle('kill-process-by-name', (_, exeName) => {
 });
 
 ipcMain.handle('kill-launched-apps', () => {
-  // Kiosk rejimini darhol tiklash — o'yin orqa fonda qolmasin
+  // Restore kiosk mode immediately — so the game doesn't stay in the background
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.show();
     mainWindow.setAlwaysOnTop(true, 'screen-saver');
@@ -1757,16 +1757,16 @@ ipcMain.handle('kill-launched-apps', () => {
     mainWindow.focus();
     mainWindow.moveTop();
   }
-  // Alt+Tab blocker'ni qayta ishga tushiramiz (o'yin tugadi)
+  // Restart the Alt+Tab blocker (the game has ended)
   startAltTabBlocker();
   if (!isWindows) return;
   const toKill = [...launchedApps];
   launchedApps = [];
-  // Tracked ilovalarni o'ldirish (child process'lar bilan birga /T)
+  // Kill tracked apps (together with child processes, /T)
   for (const app of toKill) {
     exec(`taskkill /F /IM "${app.exeName}" /T`, { windowsHide: true });
   }
-  // Steam, Epic, va ularning child o'yinlarini ham o'ldirish
+  // Also kill Steam, Epic and their child games
   const knownLaunchers = [
     'steam.exe', 'epicgameslauncher.exe', 'epicwebhelper.exe',
     'gameoverlayui.exe', 'steamwebhelper.exe', 'steamservice.exe',
@@ -1850,7 +1850,7 @@ function watchDownloads() {
     path.join(profile, 'Desktop'),
   ];
   watchDirs.forEach(dir => {
-    // Ishga tushganda mavjud fayllarni tozalash
+    // Clean up existing files on startup
     cleanDir(dir);
     try {
       if (!fs.existsSync(dir)) return;
@@ -1869,7 +1869,7 @@ function startAntiCheat() {
   watchDownloads();
   checkCheatProcesses();
   setInterval(() => checkCheatProcesses(), 30 * 1000);
-  // Har 5 daqiqada ham bir marta papkalarni tozalash (fs.watch ba'zan o'tkazib yuboradi)
+  // Also clean the folders every 5 minutes (fs.watch sometimes misses events)
   const profile = process.env.USERPROFILE || process.env.HOMEPATH || '';
   setInterval(() => {
     cleanDir(path.join(profile, 'Downloads'));
@@ -1877,7 +1877,7 @@ function startAntiCheat() {
   }, 5 * 60 * 1000);
 }
 
-// ── SESSION TUGAGANDA FOYDALANUVCHI FAYLLARINI TOZALASH ───────────────────
+// ── CLEAN UP USER FILES WHEN THE SESSION ENDS ─────────────────────────────
 function deleteDirContents(dir, maxAgeMs) {
   try {
     if (!fs.existsSync(dir)) return 0;
@@ -1887,7 +1887,7 @@ function deleteDirContents(dir, maxAgeMs) {
       const full = path.join(dir, f);
       try {
         const stat = fs.statSync(full);
-        if (cutoff && stat.mtimeMs < cutoff) continue; // Eski fayllar (o'yinlar) ga tegmaymiz
+        if (cutoff && stat.mtimeMs < cutoff) continue; // Don't touch old files (games)
         if (stat.isDirectory()) {
           deleteDirContents(full);
           try { fs.rmdirSync(full); } catch {}
@@ -1901,18 +1901,18 @@ function deleteDirContents(dir, maxAgeMs) {
   } catch { return 0; }
 }
 
-// Desktop tozalash: faqat bajariladigan fayllar, shortcutlar (.lnk) qoladi
+// Desktop cleanup: only executable files; shortcuts (.lnk) stay
 function cleanDesktop(dir) {
   try {
     if (!fs.existsSync(dir)) return 0;
     let deleted = 0;
     for (const f of fs.readdirSync(dir)) {
-      if (/\.lnk$/i.test(f)) continue; // Shortcutlarga tegmaymiz
+      if (/\.lnk$/i.test(f)) continue; // Don't touch shortcuts
       const full = path.join(dir, f);
       try {
         const stat = fs.statSync(full);
-        if (stat.isDirectory()) continue; // Papkaga tegmaymiz
-        if (!BLOCKED_EXT.test(f)) continue; // Faqat exe/dll/bat...
+        if (stat.isDirectory()) continue; // Don't touch folders
+        if (!BLOCKED_EXT.test(f)) continue; // Only exe/dll/bat...
         fs.unlinkSync(full);
         deleted++;
       } catch {}
@@ -1926,17 +1926,17 @@ function cleanupUserFiles() {
   const profile = process.env.USERPROFILE || process.env.HOMEPATH || '';
   const temp = process.env.TEMP || path.join(profile, 'AppData', 'Local', 'Temp');
   let total = 0;
-  // Downloads: barcha fayllar o'chadi (foydalanuvchi yuklaganlari)
+  // Downloads: all files are deleted (user downloads)
   total += deleteDirContents(path.join(profile, 'Downloads'), null);
-  // Desktop: faqat exe/dll/bat — shortcutlar (.lnk) qoladi
+  // Desktop: only exe/dll/bat — shortcuts (.lnk) stay
   total += cleanDesktop(path.join(profile, 'Desktop'));
-  // Temp: 24 soatdan eski fayllar (o'yinlarning aktiv temp fayllariga tegmaydi)
+  // Temp: files older than 24 hours (doesn't touch games' active temp files)
   total += deleteDirContents(temp, 24 * 60 * 60 * 1000);
   if (total > 0) console.log(`[cleanup] Sessiya tugadi: ${total} ta fayl o'chirildi`);
   reportDiskSpace();
 }
 
-// ── DISK BO'SHLIG'I KUZATUVI ──────────────────────────────────────────────
+// ── FREE DISK SPACE MONITORING ────────────────────────────────────────────
 function getDiskFreeGB() {
   return new Promise((resolve) => {
     if (!isWindows) { resolve(null); return; }
@@ -1964,7 +1964,7 @@ async function reportDiskSpace() {
 
 function startDiskMonitor() {
   reportDiskSpace();
-  setInterval(() => reportDiskSpace(), 15 * 60 * 1000); // har 15 daqiqada
+  setInterval(() => reportDiskSpace(), 15 * 60 * 1000); // every 15 minutes
 }
 
 ipcMain.handle('get-apps', async () => {
@@ -1972,7 +1972,7 @@ ipcMain.handle('get-apps', async () => {
   return labApps;
 });
 
-// Windows da ishlab turgan oynali jarayonlar ro'yxati
+// List of running windowed processes on Windows
 ipcMain.handle('get-running-processes', () => new Promise((resolve) => {
   if (!isWindows) { resolve([]); return; }
   exec('tasklist /v /FO CSV /NH', { timeout: 5000, windowsHide: true }, (err, stdout) => {
@@ -2023,12 +2023,12 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// Admin chiqishga ruxsat berish
+// Allow admin exit
 ipcMain.handle('allow-quit', () => {
   allowQuit = true;
 });
 
-// Ctrl+Shift+Alt+X → parol dialog oynasi → chiqish
+// Ctrl+Shift+Alt+X → password dialog → exit
 let exitDialogWin = null;
 ipcMain.on('admin-exit-prompt', () => {
   if (exitDialogWin && !exitDialogWin.isDestroyed()) { exitDialogWin.focus(); return; }
@@ -2132,13 +2132,13 @@ function getSteamLibraries() {
   return libs;
 }
 
-// Barcha Steam o'rnatilgan o'yinlarni ACF manifestlaridan topadi
+// Finds all installed Steam games from the ACF manifests
 function discoverSteamGames() {
   const steamPath = getSteamRoot();
   if (!steamPath) return [];
   const results = [];
 
-  // Barcha steamapps papkalarini topish
+  // Find all steamapps folders
   const steamappsDirs = [path.join(steamPath, 'steamapps')];
   const vdfPath = path.join(steamPath, 'steamapps', 'libraryfolders.vdf');
   try {
@@ -2167,7 +2167,7 @@ function discoverSteamGames() {
         const gameDir = path.join(steamappsDir, 'common', installDir);
         if (!fs.existsSync(gameDir)) continue;
 
-        // Asosiy exe faylni topish (eng katta exe — odatda launcher)
+        // Find the main exe (the largest exe — usually the launcher)
         let mainExe = null;
         let maxSize = 0;
         try {
@@ -2203,7 +2203,7 @@ function discoverSteamGames() {
   return results.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// Steam bo'lmagan o'yinlarni umumiy papkalardan topadi
+// Finds non-Steam games in common folders
 function discoverNonSteamGames() {
   const SKIP_FOLDERS = new Set([
     'windows', 'system32', 'syswow64', 'program files', 'program files (x86)',
@@ -2224,14 +2224,14 @@ function discoverNonSteamGames() {
     'C:\\Battle.net', 'D:\\Battle.net',
   ];
 
-  // Har bir diskdagi "Games" papkasini ham tekshir
+  // Also check the "Games" folder on each drive
   for (const drive of ['C', 'D', 'E', 'F', 'G']) {
     const p = `${drive}:\\Games`;
     if (!SCAN_ROOTS.includes(p)) SCAN_ROOTS.push(p);
   }
 
   const results = [];
-  const seen = new Set(); // duplicate nom bo'lmasligi uchun
+  const seen = new Set(); // to avoid duplicate names
 
   const findMainExe = (dir) => {
     let best = null, bestSize = 0;
@@ -2271,7 +2271,7 @@ function discoverNonSteamGames() {
 
       const gameDir = path.join(root, entry.name);
       const mainExe = findMainExe(gameDir);
-      if (!mainExe) continue; // exe yo'q — o'yin emas
+      if (!mainExe) continue; // no exe — not a game
 
       seen.add(nameLower);
       results.push({
@@ -2295,13 +2295,13 @@ ipcMain.handle('games:steam-discover', async () => {
 ipcMain.handle('games:all-discover', async () => {
   const steam = discoverSteamGames();
   const local = discoverNonSteamGames();
-  // Duplicate nomlarni olib tashlash (Steam ro'yxatida bor bo'lsa, localdan o'chiramiz)
+  // Remove duplicate names (if it's in the Steam list, remove it from local)
   const steamNames = new Set(steam.map(g => g.name.toLowerCase()));
   const unique = local.filter(g => !steamNames.has(g.name.toLowerCase()));
   return [...steam, ...unique];
 });
 
-// Barcha qidiriladigan direktoriyalar
+// All directories to search
 function getAllSearchDirs() {
   return [
     ...getSteamLibraries(),
@@ -2316,7 +2316,7 @@ function getAllSearchDirs() {
   ].filter(d => fs.existsSync(d));
 }
 
-// O'yin nomi bo'yicha papka topadi (fuzzy match)
+// Finds a folder by game name (fuzzy match)
 function findGameByName(gameName, searchDirs) {
   const nameNorm = gameName.toLowerCase().replace(/[^a-z0-9]/g, '');
   let best = null, bestScore = 0;
@@ -2329,12 +2329,12 @@ function findGameByName(gameName, searchDirs) {
       if (!entry.isDirectory()) continue;
       const entryNorm = entry.name.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-      // Mos kelish darajasini hisoblash
+      // Calculate the match score
       let score = 0;
       if (entryNorm === nameNorm) score = 100;
       else if (entryNorm.includes(nameNorm) || nameNorm.includes(entryNorm)) score = 70;
       else {
-        // Birinchi 4 ta harf mos kelsa
+        // If the first 4 letters match
         const minLen = Math.min(nameNorm.length, entryNorm.length);
         let common = 0;
         for (let i = 0; i < minLen; i++) {
@@ -2353,7 +2353,7 @@ function findGameByName(gameName, searchDirs) {
 
   if (!best || best.score < 40) return null;
 
-  // Topilgan papkada eng katta exeni topish
+  // Find the largest exe in the found folder
   let mainExe = null, maxSize = 0;
   try {
     const scan = (d, depth) => {
@@ -2377,14 +2377,14 @@ function findGameByName(gameName, searchDirs) {
 ipcMain.handle('games:scan', async (_, games) => {
   const cache = loadGameCache();
   const searchDirs = getAllSearchDirs();
-  const toReport = []; // serverga yuborish uchun
+  const toReport = []; // to send to the server
 
   for (const game of games) {
     if (cache[game.id]?.manual) continue;
 
     let foundPath = null;
 
-    // 1. To'liq yo'l berilgan va mavjud bo'lsa (.exe kengaytmasi bo'lmasa ham sinab ko'r)
+    // 1. Full path given and it exists (try even without the .exe extension)
     if (game.exe_path) {
       const p = game.exe_path.trim();
       if (fs.existsSync(p)) {
@@ -2394,7 +2394,7 @@ ipcMain.handle('games:scan', async (_, games) => {
       }
     }
 
-    // 2. Exe nomi bo'yicha qidirish (exe_path berilgan lekin to'liq yo'l emas)
+    // 2. Search by exe name (exe_path given but not a full path)
     if (!foundPath && game.exe_path) {
       let exeName = path.basename(game.exe_path.trim());
       if (!exeName.toLowerCase().endsWith('.exe')) exeName += '.exe';
@@ -2410,7 +2410,7 @@ ipcMain.handle('games:scan', async (_, games) => {
       }
     }
 
-    // 3. exe_path bo'sh bo'lsa — o'yin nomi bo'yicha papka qidirish
+    // 3. exe_path empty — search for a folder by game name
     if (!foundPath && game.name) {
       foundPath = findGameByName(game.name, searchDirs);
     }
@@ -2418,7 +2418,7 @@ ipcMain.handle('games:scan', async (_, games) => {
     const prev = cache[game.id];
     cache[game.id] = { exe_path: foundPath, verified: !!foundPath, manual: false };
 
-    // Yangi topilgan bo'lsa — serverga xabar ber
+    // Newly found — notify the server
     if (foundPath && foundPath !== prev?.exe_path && game.id) {
       toReport.push({ id: game.id, exe_path: path.basename(foundPath) });
     }
@@ -2426,7 +2426,7 @@ ipcMain.handle('games:scan', async (_, games) => {
 
   saveGameCache(cache);
 
-  // Topilgan exe yo'llarini serverga yuborish (agentAuth bilan)
+  // Send the found exe paths to the server (with agentAuth)
   if (toReport.length) {
     const agentSecret = process.env.AGENT_SECRET || '';
     for (const g of toReport) {

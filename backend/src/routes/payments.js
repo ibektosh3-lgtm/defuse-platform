@@ -9,10 +9,10 @@ const { sendToUser } = require('../utils/fcm');
 const MIN = parseInt(process.env.PAYMENT_MIN) || 5000;
 const MAX = parseInt(process.env.PAYMENT_MAX) || 10000000;
 
-// ── YORDAMCHI ──────────────────────────────────────────────────────────────
+// ── HELPERS ────────────────────────────────────────────────────────────────
 
 async function creditBalance(client, userId, amount, provider, txId, labId = null) {
-  // Bonus hisoblash — filial qoidalari (amount >= min_amount bo'lganlardan eng katta bonus)
+  // Bonus calculation — branch rules (the largest bonus among rules with amount >= min_amount)
   let bonus = 0;
   let coinRate = 0;
   if (labId) {
@@ -26,10 +26,10 @@ async function creditBalance(client, userId, amount, provider, txId, labId = nul
     ]);
     const bonusPercent = parseFloat(labInfo.rows[0]?.topup_bonus_percent || 0);
     if (bonusPercent > 0) {
-      // Foizli bonus: belgilangan foizda (masalan 30% → 100K tashasa 30K bonus)
+      // Percentage bonus: at the set percentage (e.g. 30% → a 30K bonus on a 100K top-up)
       bonus = Math.round(amount * bonusPercent / 100);
     } else if (bRes.rows.length) {
-      // Bosqichli bonus (eski tizim)
+      // Tiered bonus (old system)
       bonus = parseFloat(bRes.rows[0].bonus_amount) || 0;
     }
     coinRate = parseFloat(labInfo.rows[0]?.coin_earn_rate || 0);
@@ -54,7 +54,7 @@ async function creditBalance(client, userId, amount, provider, txId, labId = nul
       VALUES ($1,$2,$3,$4,'completed',$5)
     `, [userId, labId, amount, provider, txId]);
   }
-  // Bonus alohida payments yozuvi (tarix uchun)
+  // Bonus as a separate payments record (for history)
   if (bonus > 0) {
     await client.query(`
       INSERT INTO payments (user_id, lab_id, amount, provider, status, transaction_id)
@@ -62,7 +62,7 @@ async function creditBalance(client, userId, amount, provider, txId, labId = nul
     `, [userId, labId, bonus, `${txId}_bonus`]);
   }
 
-  // Tanga hisoblash — lab coin_earn_rate foizi bo'yicha
+  // Coin calculation — by the lab's coin_earn_rate percentage
   let coinsAdded = 0;
   if (coinRate > 0) {
     coinsAdded = Math.round(amount * coinRate / 100);
@@ -82,9 +82,9 @@ async function creditBalance(client, userId, amount, provider, txId, labId = nul
   return { amount, bonus, total, coins: coinsAdded };
 }
 
-// ── TO'LOV TARIXI ──────────────────────────────────────────────────────────
+// ── PAYMENT HISTORY ────────────────────────────────────────────────────────
 
-// Mijozning bonus tarixi (faqat provider='bonus' yozuvlari)
+// Customer bonus history (provider='bonus' records only)
 router.get('/my-bonuses', auth, async (req, res) => {
   try {
     const r = await pool.query(`
@@ -101,7 +101,7 @@ router.get('/my-bonuses', auth, async (req, res) => {
   }
 });
 
-// Foydalanuvchi uchun ochiq bonus ma'lumoti (lab_id bo'yicha)
+// Public bonus info for users (by lab_id)
 router.get('/bonuses', auth, async (req, res) => {
   const labId = parseInt(req.query.lab_id);
   if (!labId) return res.json({ percent: 0, tiers: [] });
@@ -132,7 +132,7 @@ router.get('/history', auth, async (req, res) => {
 });
 
 
-// ── LAB BALANSLARI ─────────────────────────────────────────────────────────
+// ── LAB BALANCES ───────────────────────────────────────────────────────────
 
 router.get('/lab-balances', auth, async (req, res) => {
   try {
@@ -161,20 +161,20 @@ router.get('/lab-balance/:labId', auth, async (req, res) => {
   }
 });
 
-// ── TO'LOV BUYURTMASI YARATISH ─────────────────────────────────────────────
+// ── CREATE PAYMENT ORDER ───────────────────────────────────────────────────
 
 router.post('/create', auth, async (req, res) => {
   const { amount, provider = 'click', lab_id, source } = req.body;
   const amountInt = parseInt(amount);
   const labId = lab_id ? parseInt(lab_id) : null;
-  // Manba: 'pc' (desktop-agent), 'mobile' (Flutter app). Kelmasa null.
+  // Source: 'pc' (desktop-agent), 'mobile' (Flutter app). null if absent.
   const src = ['pc', 'mobile'].includes(source) ? source : null;
 
   if (!amountInt || amountInt < MIN || amountInt > MAX) {
     return res.status(400).json({ error: `Miqdor ${MIN.toLocaleString()}–${MAX.toLocaleString()} oralig'ida bo'lishi kerak` });
   }
 
-  // Multi-tenant: har tolov aynan klubga tegishli. lab_id majburiy — bizga tolov kelmasligi uchun.
+  // Multi-tenant: every payment belongs to a specific club. lab_id is required — so payments never land with us.
   if (!labId) {
     return res.status(400).json({
       error: "To'lov aynan klubga bog'lanishi kerak — lab_id majburiy",
@@ -238,7 +238,7 @@ router.post('/create', auth, async (req, res) => {
   }
 });
 
-// To'lov holati tekshirish (polling uchun)
+// Payment status check (for polling)
 router.get('/status/:txId', auth, async (req, res) => {
   try {
     const result = await pool.query(
@@ -252,7 +252,7 @@ router.get('/status/:txId', auth, async (req, res) => {
   }
 });
 
-// To'lov statistikasi (admin panel uchun)
+// Payment statistics (for the admin panel)
 router.get('/stats', auth, async (req, res) => {
   try {
     const ownerRes = await pool.query('SELECT id FROM labs WHERE owner_id=$1', [req.user.id]);
@@ -276,7 +276,7 @@ router.get('/stats', auth, async (req, res) => {
   }
 });
 
-// To'lov provayderini test qilish
+// Test a payment provider
 router.post('/test/:provider', auth, async (req, res) => {
   const { provider } = req.params;
   const tests = {
@@ -309,16 +309,16 @@ router.post('/test/:provider', auth, async (req, res) => {
 // ── CLICK WEBHOOK ──────────────────────────────────────────────────────────
 
 function clickSign(params, secret) {
-  // action=0 (prepare): без merchant_prepare_id
-  // action=1 (complete): включает merchant_prepare_id
+  // action=0 (prepare): without merchant_prepare_id
+  // action=1 (complete): includes merchant_prepare_id
   const parts = [params.click_trans_id, params.service_id, secret, params.merchant_trans_id];
   if (String(params.action) === '1') parts.push(params.merchant_prepare_id);
   parts.push(params.amount, params.action, params.sign_time);
   return crypto.createHash('md5').update(parts.join('')).digest('hex');
 }
 
-// Click webhook — har klub o'z secret'i orqali validate qilinadi.
-// merchant_trans_id ichida tolov_id bor → lab_id → labs.click_secret
+// Click webhook — each club is validated with its own secret.
+// merchant_trans_id contains the payment id → lab_id → labs.click_secret
 async function _resolveClickSecret(merchantTransId) {
   const r = await pool.query(
     `SELECT p.lab_id, p.id AS payment_id, p.user_id, p.amount, p.status,
@@ -373,7 +373,7 @@ router.post('/click/complete', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    // Snack yoki sessiya tolovi bo'lsa — order status'ni yangilash
+    // For snack or session payments — update the order status
     if (String(p.merchant_trans_id).startsWith('snack_order_')) {
       const snackId = String(p.merchant_trans_id).replace('snack_order_', '');
       await client.query(
@@ -387,7 +387,7 @@ router.post('/click/complete', async (req, res) => {
         `UPDATE payments SET status='completed' WHERE transaction_id=$1`, [p.merchant_trans_id]
       );
     } else {
-      // Klub balansini to'ldirish
+      // Top up the club balance
       await creditBalance(client, found.user_id, found.amount, 'click', p.merchant_trans_id, found.lab_id);
     }
     await client.query('COMMIT');
@@ -409,9 +409,9 @@ router.post('/click/complete', async (req, res) => {
 
 // ── PAYME WEBHOOK ──────────────────────────────────────────────────────────
 
-// Payme webhook — har klub o'z payme_secret'i bilan validate qilinadi.
-// Payme har klubga alohida URL bermaydi, shuning uchun order_id/tx_id
-// orqali payment yozuvi topiladi, uning lab_id'sidan secret olamiz.
+// Payme webhook — each club is validated with its own payme_secret.
+// Payme doesn't give each club a separate URL, so the payment record
+// is found via order_id/tx_id, and we take the secret from its lab_id.
 async function _findPaymePayment(params) {
   const key = params?.account?.order_id || params?.id;
   if (!key) return null;
@@ -436,7 +436,7 @@ router.post('/payme', async (req, res) => {
   const authHeader = req.headers.authorization || '';
 
   try {
-    // Order topib klub secretini olamiz — auth shu bilan tekshiriladi
+    // Find the order and get the club secret — auth is verified with it
     const found = await _findPaymePayment(params);
     if (!found) {
       return res.json({ error: { code: -31050, message: 'Order not found' }, id });
@@ -510,7 +510,7 @@ router.post('/payme', async (req, res) => {
   }
 });
 
-// ── UZUM TO'LOV ───────────────────────────────────────────────────────────
+// ── UZUM PAYMENTS ─────────────────────────────────────────────────────────
 
 router.post('/uzum/prepare', async (req, res) => {
   if (!process.env.UZUM_SECRET) return res.status(503).json({ error: 'Payment not configured', code: 'NO_CREDENTIALS' });
@@ -570,7 +570,7 @@ router.post('/uzum/complete', async (req, res) => {
   } catch (e) { res.status(500).json({ error: process.env.NODE_ENV === 'production' ? 'Ichki server xatosi' : e.message }); }
 });
 
-// ── APELSIN TO'LOV (JSONRPC, Payme kabi) ──────────────────────────────────
+// ── APELSIN PAYMENTS (JSONRPC, like Payme) ────────────────────────────────
 
 router.post('/apelsin', async (req, res) => {
   if (!process.env.APELSIN_SECRET) return res.json({ error: { code: -32504, message: 'Payment not configured' }, id: req.body.id });
@@ -639,7 +639,7 @@ router.post('/apelsin', async (req, res) => {
   }
 });
 
-// ── ANOR TO'LOV (Click kabi, MD5 sign) ────────────────────────────────────
+// ── ANOR PAYMENTS (like Click, MD5 sign) ──────────────────────────────────
 
 function anorSign(params, secret) {
   const parts = [params.anor_trans_id, params.service_id, secret, params.merchant_trans_id];

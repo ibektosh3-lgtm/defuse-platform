@@ -16,20 +16,14 @@
 
 ---
 
-## O'zbekcha
+## Overview
 
-**Defuse** — O'zbekistondagi kompyuter klublari va gaming markazlari uchun ishlab chiqilgan **birinchi mahalliy to'liq SaaS platforma**. Klub egasi bitta oyning to'lovi bilan 50 gacha PC'ni, kassani, moliyani, xarajatlarni, snack POS ni, o'yinlarni, turnirlarni va foydalanuvchilarni yagona web-panel orqali boshqaradi.
+**Defuse** is the **first Uzbek-made full-stack SaaS platform** for computer clubs and gaming centers. With one monthly subscription, the club owner runs up to 50 PCs, the cash desk, finance, expenses, snack POS, games, tournaments and the customer database from a single web panel.
 
-**Nima uchun kerak:**
-- ⚠️ Bugun O'zbekistonda 500+ klub chet el yechimini (iSafeCloud, GGLeap, SmartLaunch) ishlatadi → yiliga $150 000+ valyuta chetga chiqadi.
-- ⚠️ O'zbek tili, Payme/Click, o'zbek fiskal hisobot — chet el mahsulotlarida yo'q.
-- ✅ Defuse mahalliy, to'liq stack, xavfsiz va arzon.
-
-## English
-
-**Defuse** is the **first Uzbek-made full-stack SaaS platform** for computer gaming centers. One subscription, and the club owner runs 50 PCs, the cashier, finance, expenses, snack POS, games, tournaments, and customer database from a single web panel.
-
-**Why it matters** — 500+ clubs in Uzbekistan currently pay in USD to foreign vendors that ship no Uzbek localization, no Click/Payme integration, no local tax reporting, and no timezone-aligned support. Defuse fills that gap.
+**Why it matters:**
+- ⚠️ Today 500+ clubs in Uzbekistan use foreign solutions (iCafeCloud, GGLeap, SmartLaunch) → $150,000+ in foreign currency leaves the country every year.
+- ⚠️ Foreign products have no Uzbek language, no Payme/Click integration and no Uzbek fiscal reporting, and their support doesn't work in our time zone.
+- ✅ Defuse is local, full-stack, secure and affordable.
 
 ---
 
@@ -37,16 +31,16 @@
 
 <table>
 <tr>
-<td width="50%"><b>Admin Panel — Dashboard</b><br/><i>Klub egasi uchun real-time boshqaruv paneli</i><br/><img src=".github/screenshots/admin-dashboard.png"/></td>
-<td width="50%"><b>Desktop Agent — Paketlar</b><br/><i>Mijoz PC oldida paket tanlaydi va to'laydi</i><br/><img src=".github/screenshots/agent-packages.png"/></td>
+<td width="50%"><b>Admin Panel — Dashboard</b><br/><i>Real-time control panel for the club owner</i><br/><img src=".github/screenshots/admin-dashboard.png"/></td>
+<td width="50%"><b>Desktop Agent — Packages</b><br/><i>The customer picks a package at the PC and pays</i><br/><img src=".github/screenshots/agent-packages.png"/></td>
 </tr>
 <tr>
-<td><b>Desktop Agent — Sessiya taymer</b><br/><i>Live taymer, balans, snack, admin xabar</i><br/><img src=".github/screenshots/agent-active.png"/></td>
-<td><b>Desktop Agent — O'yin launcher</b><br/><i>Backend'dan yuklanadigan katalog, 65+ o'yin</i><br/><img src=".github/screenshots/agent-launcher.png"/></td>
+<td><b>Desktop Agent — Session timer</b><br/><i>Live timer, balance, snacks, admin messages</i><br/><img src=".github/screenshots/agent-active.png"/></td>
+<td><b>Desktop Agent — Game launcher</b><br/><i>Catalog loaded from the backend, 65+ games</i><br/><img src=".github/screenshots/agent-launcher.png"/></td>
 </tr>
 <tr>
-<td><b>Mobile App — Bosh sahifa</b><br/><i>Hamyon, tez bron, klublar ro'yxati</i><br/><img src=".github/screenshots/mobile-home.png"/></td>
-<td><b>Mobile App — Klub tafsiloti</b><br/><i>Seat map, paket tanlash, Click/Payme to'lov</i><br/><img src=".github/screenshots/mobile-club.png"/></td>
+<td><b>Mobile App — Home</b><br/><i>Wallet, quick booking, club list</i><br/><img src=".github/screenshots/mobile-home.png"/></td>
+<td><b>Mobile App — Club details</b><br/><i>Seat map, package selection, Click/Payme payment</i><br/><img src=".github/screenshots/mobile-club.png"/></td>
 </tr>
 </table>
 
@@ -84,7 +78,7 @@ mobile_app/      Flutter customer app (iOS, Android)
 - 🎨 **10 selectable UI themes** for the desktop agent — club owner picks their brand
 - 🔒 **Security-hardened** — 40+ attack vectors penetration-tested, TOTP 2FA, IP allowlist, brute-force detection, dual-approval refunds
 - 👶 **Age gating** — 18+ games (GTA, Cyberpunk, Witcher) require admin unlock — Uzbek family-values compliant
-- 🇺🇿 **Localized** — full O'zbek + Ru language, Uzbek fiscal reports (Z/X reports)
+- 🇺🇿 **Localized** — full Uzbek + Russian language, Uzbek fiscal reports (Z/X reports)
 - 📊 **Live dashboard** — real-time SSE stream, daily Telegram summary
 - ⚡ **Battle-tested** — 10 concurrent PC simulator, 10-persona real-gamer UX test
 

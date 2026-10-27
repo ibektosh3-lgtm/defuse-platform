@@ -38,7 +38,7 @@ async function deductOwnerGroupBalance(client, userId, labId, amount) {
   }
 }
 
-// Bron yaratish (computer_id ixtiyoriy — aniq PC yoki avtomatik)
+// Create a booking (computer_id optional — a specific PC or automatic)
 router.post('/', auth, async (req, res) => {
   const { lab_id, package_id, computer_id: requestedPcId, scheduled_at, quantity: rawQty } = req.body;
   const user_id = req.user.id;
@@ -52,7 +52,7 @@ router.post('/', auth, async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // Paket (ixtiyoriy)
+    // Package (optional)
     let pkg = null;
     if (package_id) {
       const pkgRes = await client.query(
@@ -65,14 +65,14 @@ router.post('/', auth, async (req, res) => {
       pkg = pkgRes.rows[0];
     }
 
-    // Balans (to'liq tekshiruv depozit miqdori aniqlanganidan keyin amalga oshiriladi)
+    // Balance (the full check happens after the deposit amount is determined)
     const userRes = await client.query(
       'SELECT balance FROM users WHERE id=$1 FOR UPDATE', [user_id]
     );
 
-    // Vaqt oralig'i
+    // Time range
     const start = scheduled_at ? new Date(scheduled_at) : new Date();
-    // Past-time validatsiya — 2 daqiqadan oldingi vaqtga bron qilib bo'lmaydi
+    // Past-time validation — can't book a time more than 2 minutes in the past
     if (isNaN(start.getTime())) {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'scheduled_at noto\'g\'ri', code: 'INVALID_TIME' });
@@ -85,7 +85,7 @@ router.post('/', auth, async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Bron vaqti 30 kundan uzoq', code: 'TOO_FAR_FUTURE' });
     }
-    // Paketsiz bronda 2 soatlik slot ajratiladi (faqat conflict tekshiruv uchun)
+    // A booking without a package reserves a 2-hour slot (for conflict checks only)
     const end = pkg
       ? new Date(start.getTime() + pkg.duration_minutes * 60 * 1000)
       : new Date(start.getTime() + 120 * 60 * 1000);
@@ -93,7 +93,7 @@ router.post('/', auth, async (req, res) => {
     let computer_id, computer_number;
 
     if (requestedPcId) {
-      // Aniq PC — lock qilib availability tekshirish
+      // Specific PC — lock and check availability
       const pcRes = await client.query(
         `SELECT c.id, c.number, c.lab_id, c.is_broken FROM computers c
          WHERE c.id = $1 FOR UPDATE`,
@@ -108,7 +108,7 @@ router.post('/', auth, async (req, res) => {
         await client.query('ROLLBACK');
         return res.status(409).json({ error: 'Bu PC buzuq', conflict: true });
       }
-      // Aktiv sessiya overlap tekshiruvi
+      // Active session overlap check
       const sesConflict = await client.query(`
         SELECT id FROM sessions
         WHERE computer_id=$1 AND status='active'
@@ -121,7 +121,7 @@ router.post('/', auth, async (req, res) => {
       computer_id = pc.id;
       computer_number = pc.number;
     } else {
-      // Avtomatik — bo'sh PC tanlash
+      // Automatic — pick a free PC
       const pcRes = await client.query(`
         SELECT c.id, c.number FROM computers c
         WHERE c.lab_id = $1 AND NOT c.is_broken
@@ -150,7 +150,7 @@ router.post('/', auth, async (req, res) => {
         computer_id = pcRes.rows[0].id;
         computer_number = pcRes.rows[0].number;
       } else {
-        // Guruh broni — bir nechta PC
+        // Group booking — multiple PCs
         const labDepRes2 = await client.query(
           'SELECT booking_deposit, name, click_merchant_id, payme_merchant_id FROM labs WHERE id=$1',
           [lab_id]
@@ -162,7 +162,7 @@ router.post('/', auth, async (req, res) => {
         const chargeEach = depositAmount2 > 0 ? depositAmount2 : pkg2.price;
         const totalCharge = chargeEach * quantity;
 
-        // Guruh broni — owner group balansi + wallet kombinatsiyasi
+        // Group booking — owner group balance + wallet combination
         const userBal = await client.query('SELECT balance FROM users WHERE id=$1 FOR UPDATE', [user_id]);
         const walletBal = parseFloat(userBal.rows[0].balance);
         const groupBal2 = await getOwnerGroupBalance(client, user_id, lab_id);
@@ -221,7 +221,7 @@ router.post('/', auth, async (req, res) => {
       }
     }
 
-    // Bron yozish — exclusion constraint race condition'dan himoya qiladi
+    // Insert the booking — the exclusion constraint protects against race conditions
     let booking;
     try {
       const bookingRes = await client.query(`
@@ -237,7 +237,7 @@ router.post('/', auth, async (req, res) => {
       throw constraintErr;
     }
 
-    // Depozit: avval xona (room) depositini tekshir, yo'q bo'lsa lab depositini ol
+    // Deposit: check the room deposit first, fall back to the lab deposit
     const resolvedLabId = pkg?.lab_id || lab_id;
     const pcRoomRes = await client.query('SELECT room_id FROM computers WHERE id=$1', [computer_id]);
     const roomId = pcRoomRes.rows[0]?.room_id;
@@ -261,7 +261,7 @@ router.post('/', auth, async (req, res) => {
       return res.status(400).json({ error: 'Paketsiz bron uchun klub bron narxi belgilanmagan. Paket tanlang yoki klub bron narxini kiriting.' });
     }
 
-    // Owner group balansi + wallet kombinatsiyasi
+    // Owner group balance + wallet combination
     const walletBalance = parseFloat(userRes.rows[0].balance);
     const groupBalance = await getOwnerGroupBalance(client, user_id, resolvedLabId);
     const availableBalance = groupBalance + walletBalance;
@@ -288,7 +288,7 @@ router.post('/', auth, async (req, res) => {
       });
     }
 
-    // Avval owner group lablardan, qolganini walletdan ayirish
+    // Deduct from owner group labs first, the rest from the wallet
     const fromGroup = Math.min(groupBalance, chargeAmount);
     const fromWallet = chargeAmount - fromGroup;
     if (fromGroup > 0) {
@@ -323,7 +323,7 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
-// Keyingi bron (lock screen uchun — agentAuth kerak)
+// Next booking (for the lock screen — requires agentAuth)
 const agentAuth = (req, res, next) => {
   const secret = process.env.AGENT_SECRET;
   if (!secret) {
@@ -337,8 +337,8 @@ const agentAuth = (req, res, next) => {
   next();
 };
 
-// Bron egasi sessiyasini tugatganda bronni bekor qilish (agent-auth)
-// ?source=bulk bo'lsa booking_groups dan, aks holda bookings dan
+// Cancel the booking when its owner ends their session (agent-auth)
+// If ?source=bulk — from booking_groups, otherwise from bookings
 router.delete('/agent/:id/cancel', agentAuth, async (req, res) => {
   const id = parseInt(req.params.id);
   const source = req.query.source || 'single';
@@ -399,7 +399,7 @@ router.delete('/agent/:id/cancel', agentAuth, async (req, res) => {
 
 router.get('/computer/:id/next', agentAuth, async (req, res) => {
   try {
-    // Single bookings VA bulk booking_seats — eng yaqinini olish
+    // Single bookings AND bulk booking_seats — take the nearest one
     const result = await pool.query(`
       SELECT id, scheduled_at, scheduled_to, user_name, user_phone,
              package_name, duration_minutes, source
@@ -441,7 +441,7 @@ router.get('/computer/:id/next', agentAuth, async (req, res) => {
   }
 });
 
-// Mening bronlarim
+// My bookings
 router.get('/my', auth, async (req, res) => {
   try {
     const result = await pool.query(`
@@ -460,7 +460,7 @@ router.get('/my', auth, async (req, res) => {
   }
 });
 
-// Bronni uzaytirish (foydalanuvchi tomonidan)
+// Extend a booking (by the user)
 router.post('/:id/extend', auth, async (req, res) => {
   const { minutes } = req.body;
   if (![3, 5, 10, 15, 20].includes(parseInt(minutes))) {
@@ -481,7 +481,7 @@ router.post('/:id/extend', auth, async (req, res) => {
   }
 });
 
-// Bronni bekor qilish
+// Cancel a booking
 router.delete('/:id', auth, async (req, res) => {
   const client = await pool.connect();
   try {
@@ -501,7 +501,7 @@ router.delete('/:id', auth, async (req, res) => {
       return res.status(400).json({ error: 'Bron allaqachon bekor qilingan' });
     }
 
-    // Bron vaqtigacha 30 daqiqadan ko'p qolgan bo'lsa depozit qaytariladi
+    // The deposit is refunded if more than 30 minutes remain before the booking
     const now = new Date();
     const scheduled = new Date(booking.scheduled_at);
     const minutesLeft = (scheduled - now) / 60000;

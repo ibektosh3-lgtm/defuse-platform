@@ -33,7 +33,7 @@ SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,
   ));
-  // Darhol UI ko'rsatamiz — init fonda ketadi
+  // Show the UI immediately — init runs in the background
   runApp(const DefuseApp());
   _initServices();
 }

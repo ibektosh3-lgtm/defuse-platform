@@ -14,8 +14,8 @@ const agentLoginLimiter = rateLimit({
   skipSuccessfulRequests: false,
 });
 
-// Hozirgi vaqtga mos room_price_schedules dan narx oladi
-// from_hour > to_hour bo'lsa — kechasi (23:00 → 08:00) deb hisoblanadi
+// Gets the price from room_price_schedules matching the current time
+// If from_hour > to_hour — treated as overnight (23:00 → 08:00)
 async function getScheduledRate(client, labId, roomId) {
   if (!labId) return null;
   const res = await client.query(
@@ -35,7 +35,7 @@ async function getScheduledRate(client, labId, roomId) {
   return null;
 }
 
-// Per-lab balans: bir owner ostidagi barcha lablar balansini birlashtiradi
+// Per-lab balance: combines the balances of all labs under one owner
 async function getOwnerGroupBalance(client, userId, labId) {
   const r = await client.query(`
     SELECT COALESCE(SUM(ulb.balance), 0) AS total
@@ -47,7 +47,7 @@ async function getOwnerGroupBalance(client, userId, labId) {
   return parseFloat(r.rows[0]?.total || 0);
 }
 
-// Bir owner ostidagi lablardan ketma-ket ayiradi (joriy lab birinchi)
+// Deducts sequentially from labs under one owner (current lab first)
 async function deductOwnerGroupBalance(client, userId, labId, amount) {
   const r = await client.query(`
     SELECT ulb.lab_id, ulb.balance::float FROM user_lab_balances ulb
@@ -77,22 +77,22 @@ async function deductOwnerGroupBalance(client, userId, labId, amount) {
   }
 }
 
-// Agent desktop ilovasi uchun maxfiy kalit tekshiruvi
+// Secret key check for the agent desktop app
 const agentAuth = (req, res, next) => {
   const secret = process.env.AGENT_SECRET;
   if (!secret) {
     if (process.env.NODE_ENV === 'production') {
       return res.status(401).json({ error: 'Server sozlanmagan: AGENT_SECRET majburiy' });
     }
-    return next(); // development: ochiq
+    return next(); // development: open
   }
   const provided = req.headers['x-agent-secret'] || req.query.agent_secret;
   if (provided !== secret) return res.status(401).json({ error: 'Agent autentifikatsiyasi talab qilinadi' });
   next();
 };
 
-// Farrux topilma: profile "Sessiya tarixi" onTap: () {} bo'sh edi.
-// GET /api/sessions/history?limit=30 — foydalanuvchi sessiya tarixi
+// Farrux's finding: the profile "Session history" onTap: () {} was empty.
+// GET /api/sessions/history?limit=30 — user session history
 router.get('/history', auth, async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 30, 100);
@@ -116,8 +116,8 @@ router.get('/history', auth, async (req, res) => {
   }
 });
 
-// Farrux/Muzaffar topilmasi — oxirgi paketni qayta olish + trial paket
-// GET /api/sessions/last-package — foydalanuvchi oxirgi 30 kunda ko'p ishlatgan paket
+// Farrux/Muzaffar's finding — re-buy the last package + trial package
+// GET /api/sessions/last-package — the package the user used most in the last 30 days
 router.get('/last-package', auth, async (req, res) => {
   try {
     const r = await pool.query(`
@@ -135,7 +135,7 @@ router.get('/last-package', auth, async (req, res) => {
   }
 });
 
-// Faol sessiya (agent uchun)
+// Active session (for the agent)
 router.get('/computer/:id/active', agentAuth, async (req, res) => {
   try {
     const result = await pool.query(`
@@ -168,7 +168,7 @@ router.get('/computer/:id/active', agentAuth, async (req, res) => {
   }
 });
 
-// Voucher orqali sessiya boshlash (balans yechilmaydi — allaqachon to'langan)
+// Start a session via voucher (balance not charged — already paid)
 router.post('/start-voucher', auth, async (req, res) => {
   const { computer_id, voucher_id } = req.body;
   if (!computer_id || !voucher_id) return res.status(400).json({ error: 'computer_id va voucher_id kerak' });
@@ -193,7 +193,7 @@ router.post('/start-voucher', auth, async (req, res) => {
     if (busyRes.rows.length && busyRes.rows[0].user_id !== user_id) {
       throw new Error('Bu kompyuterda boshqa foydalanuvchi sessiyasi mavjud');
     }
-    // Foydalanuvchining o'z eski sessiyasini tugatish (balansni qaytarish bilan)
+    // End the user's own old session (with a balance refund)
     if (busyRes.rows.length && busyRes.rows[0].user_id === user_id) {
       const oldSesId = busyRes.rows[0].id;
       const oldSesRes = await client.query(
@@ -252,11 +252,11 @@ router.post('/start-voucher', auth, async (req, res) => {
   } finally { client.release(); }
 });
 
-// Sessiya boshlash (balansdan ayiradi, tranzaksiya)
+// Start a session (deducts from balance, in a transaction)
 router.post('/start', auth, async (req, res) => {
   const { computer_id, package_id } = req.body;
   const user_id = req.user.id;
-  const freeEntry = !package_id; // paketsiz kirish
+  const freeEntry = !package_id; // entry without a package
 
   if (!computer_id) {
     return res.status(400).json({ error: 'computer_id kerak' });
@@ -300,16 +300,16 @@ router.post('/start', auth, async (req, res) => {
       }
     }
 
-    // computers qatorini qulflash — parallel /start so'rovlarida race condition oldini oladi
+    // Lock the computers row — prevents race conditions on parallel /start requests
     const compLock = await client.query(
       'SELECT c.id, c.hourly_rate, c.room_id, c.lab_id, r.hourly_rate AS room_hourly_rate FROM computers c LEFT JOIN rooms r ON r.id = c.room_id WHERE c.id=$1 FOR UPDATE OF c',
       [computer_id]
     );
     if (!compLock.rows.length) throw new Error('Kompyuter topilmadi');
     const computer = compLock.rows[0];
-    // Vaqtga qarab dinamik narx (room_price_schedules)
+    // Time-based dynamic pricing (room_price_schedules)
     const scheduleRate = await getScheduledRate(client, computer.lab_id, computer.room_id);
-    // Narx zanjiri: jadval narxi → kompyuter narxi → xona narxi → paket narxidan hisoblash
+    // Price chain: schedule price → computer price → room price → calculated from the package price
     computer.effective_rate = scheduleRate || computer.hourly_rate || computer.room_hourly_rate || null;
     if (!computer.effective_rate && computer.lab_id && freeEntry) {
       const pkgRate = await client.query(
@@ -335,7 +335,7 @@ router.post('/start', auth, async (req, res) => {
 
     const now = getNow();
 
-    // Paketsiz kirish: faqat birinchi blok (maks 1 soat) yechiladi, keyin uzaytiriladi
+    // Entry without a package: only the first block (max 1 hour) is charged, then extended
     let freeEntryAmount = 0;
     let freeEntryMinutes = 0;
     let freeEntryExtend = false;
@@ -358,14 +358,14 @@ router.post('/start', auth, async (req, res) => {
     let pkgWindowEndsAt = null;
     if (!freeEntry && pkg.active_to_hour != null) {
       const toH = parseInt(pkg.active_to_hour);
-      // Toshkent vaqtida bugungi sana olish (UTC+5, DST yo'q)
+      // Get today's date in Tashkent time (UTC+5, no DST)
       const tzDate = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Tashkent' }); // "2025-01-15"
       const windowEnd = new Date(`${tzDate}T${String(toH).padStart(2,'0')}:00:00+05:00`);
       if (windowEnd <= now) windowEnd.setDate(windowEnd.getDate() + 1);
       if (windowEnd < endsAt) { timeLimitedPkg = true; pkgWindowEndsAt = windowEnd; }
     }
 
-    // Sessiya davomida bron bor-yo'qligini tekshirish (overlap)
+    // Check whether there is a booking during the session (overlap)
     const bronConflict = await client.query(`
       SELECT bk.scheduled_at FROM bookings bk
       WHERE bk.computer_id = $1
@@ -410,7 +410,7 @@ router.post('/start', auth, async (req, res) => {
 
     await client.query('UPDATE computers SET status=$1 WHERE id=$2', ['busy', computer_id]);
 
-    // Foydalanuvchining ushbu kompyuterga bronini aktivlashtirish (ertaroq yoki vaqtida kelgan)
+    // Activate the user's booking on this computer (arrived early or on time)
     const earlyBooking = await client.query(`
       SELECT id FROM bookings
       WHERE user_id=$1 AND computer_id=$2 AND status='confirmed'
@@ -463,7 +463,7 @@ router.post('/start', auth, async (req, res) => {
   }
 });
 
-// Voucher sessiyasi tugaganda qolgan vaqtni saqlash
+// Save the remaining time when a voucher session ends
 async function saveVoucherRemainder(dbClient, sessionId) {
   const sesRes = await dbClient.query(
     'SELECT started_at, ends_at, voucher_id FROM sessions WHERE id=$1',
@@ -476,7 +476,7 @@ async function saveVoucherRemainder(dbClient, sessionId) {
   const minutesUsed = Math.ceil((now - new Date(started_at)) / 60000);
 
   // remaining_minutes = max(0, current_remaining - minutesUsed)
-  // Agar sessiya tabiiy tugagan bo'lsa (force-end) → remaining = 0
+  // If the session ended naturally (force-end) → remaining = 0
   const naturalEnd = new Date(ends_at) <= now;
   if (naturalEnd) {
     await dbClient.query(
@@ -484,7 +484,7 @@ async function saveVoucherRemainder(dbClient, sessionId) {
       [voucher_id]
     );
   } else {
-    // Erta chiqib ketdi — qolgan vaqtni saqla
+    // Left early — save the remaining time
     const r = await dbClient.query(
       `UPDATE session_vouchers
        SET remaining_minutes = GREATEST(0, remaining_minutes - $1),
@@ -497,9 +497,9 @@ async function saveVoucherRemainder(dbClient, sessionId) {
   }
 }
 
-// Mehmon (paketsiz, loginsiz) kirish
+// Guest entry (no package, no login)
 router.post('/guest-start', agentAuth, async (req, res) => {
-  // Ulug'bek topilma: mehmon paket va amount ma'lumotini DB ga yozish kerak
+  // Ulug'bek's finding: guest package and amount info must be written to the DB
   const { computer_id, guest_name, package_id, amount_paid, payment_type } = req.body;
   if (!computer_id) return res.status(400).json({ error: 'computer_id kerak' });
   if (!guest_name || String(guest_name).trim().length < 2) {
@@ -510,7 +510,7 @@ router.post('/guest-start', agentAuth, async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // computers qatorini qulflash — parallel guest/user sessiya race condition oldini oladi
+    // Lock the computers row — prevents race conditions between parallel guest/user sessions
     const compLockG = await client.query(
       'SELECT id FROM computers WHERE id=$1 FOR UPDATE', [computer_id]
     );
@@ -525,7 +525,7 @@ router.post('/guest-start', agentAuth, async (req, res) => {
     const now = getNow();
     let endsAt, packageInfo = null;
     let finalAmount = 0;
-    // Paket tanlanganmi?
+    // Was a package selected?
     if (package_id) {
       const pkgR = await client.query(
         `SELECT id, name, price, duration_minutes FROM packages WHERE id=$1`,
@@ -536,10 +536,10 @@ router.post('/guest-start', agentAuth, async (req, res) => {
       endsAt = new Date(now.getTime() + packageInfo.duration_minutes * 60 * 1000);
       finalAmount = parseFloat(packageInfo.price);
     } else {
-      endsAt = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24 soat (admin tugatadi)
+      endsAt = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24 hours (the admin ends it)
     }
 
-    // Guest sessiya davomida bron bor-yo'qligini tekshirish
+    // Check whether there is a booking during the guest session
     const guestBronConflict = await client.query(`
       SELECT bk.scheduled_at FROM bookings bk
       WHERE bk.computer_id = $1
@@ -579,12 +579,12 @@ router.post('/guest-start', agentAuth, async (req, res) => {
   }
 });
 
-// Sessiyani tugatish
+// End a session
 router.post('/:id/end', auth, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    // XAVFSIZLIK: faqat o'z sessiyani tugatish mumkin (yoki owner/staff bo'lgan hollarda)
+    // SECURITY: users can only end their own session (or when owner/staff)
     const ownerCheck = await client.query(
       `SELECT s.user_id, l.owner_id FROM sessions s
        LEFT JOIN labs l ON l.id = s.lab_id WHERE s.id=$1 AND s.status='active'`,
@@ -603,7 +603,7 @@ router.post('/:id/end', auth, async (req, res) => {
       return res.status(403).json({ error: 'Bu sessiyani tugatishga ruxsat yo\'q' });
     }
 
-    // Qolgan vaqtni hisoblash (refund uchun)
+    // Calculate the remaining time (for the refund)
     const timeCalc = await client.query(
       `SELECT
         EXTRACT(EPOCH FROM (ends_at - NOW())) AS remaining_seconds,
@@ -620,8 +620,8 @@ router.post('/:id/end', auth, async (req, res) => {
     const remainingSec = Math.max(0, parseFloat(t.remaining_seconds));
     const totalSec = parseFloat(t.total_seconds);
     const amountPaid = parseFloat(t.amount_paid || 0);
-    // Refund faqat balansdan yoki naqddan to'lagan bo'lsa (voucher emas)
-    // Va 5 daqiqadan ko'p qolgan bo'lsa (juda kam qolganida refund tarixi shovqin qiladi)
+    // Refund only if paid from balance or cash (not voucher)
+    // And only if more than 5 minutes remain (tiny refunds clutter the history)
     let refundAmount = 0;
     if (remainingSec > 5 * 60 && totalSec > 0 && amountPaid > 0 && t.payment_type !== 'voucher') {
       refundAmount = Math.floor((amountPaid * remainingSec) / totalSec);
@@ -640,7 +640,7 @@ router.post('/:id/end', auth, async (req, res) => {
     await client.query('UPDATE computers SET status=$1 WHERE id=$2', ['available', ses.computer_id]);
     const remainder = await saveVoucherRemainder(client, parseInt(req.params.id));
 
-    // 5-soatlik oyna ichida kelgan foydalanuvchi sessiyani tugatsa → bron completed
+    // If a user who arrived within the 5-hour window ends the session → booking completed
     if (ses.user_id) {
       await client.query(`
         UPDATE bookings SET status='completed', completed_at=NOW()
@@ -648,7 +648,7 @@ router.post('/:id/end', auth, async (req, res) => {
       `, [ses.user_id, ses.computer_id]);
     }
 
-    // Refund'ni balansga qaytarish (agar mavjud)
+    // Return the refund to the balance (if any)
     if (refundAmount > 0 && ses.user_id) {
       await client.query(
         'UPDATE user_lab_balances SET balance = balance + $1, updated_at = NOW() WHERE user_id=$2 AND lab_id=$3',
@@ -668,13 +668,13 @@ router.post('/:id/end', auth, async (req, res) => {
     await client.query('COMMIT');
     logAudit({ lab_id: ses.lab_id, action: 'session_end', entity_type: 'session', entity_id: parseInt(req.params.id), actor_type: 'user', actor_id: req.user.id, amount: ses.amount_paid, meta: { refund: refundAmount } });
 
-    // Achievement check (fon rejimida)
+    // Achievement check (in the background)
     try {
       const { checkAndAward } = require('./achievements');
       checkAndAward(ses.user_id).catch(() => {});
     } catch {}
 
-    // Referral bonus — birinchi sessiya tugaganda taklif qiluvchiga bonus
+    // Referral bonus — a bonus to the referrer when the first session ends
     try {
       const { grantReferrerBonus } = require('./referral');
       const sesCount = await pool.query(
@@ -712,13 +712,13 @@ router.post('/:id/end', auth, async (req, res) => {
   } finally { client.release(); }
 });
 
-// Majburiy tugatish (agent — vaqt tugaganda) — faqat agent secret bilan
+// Force end (agent — when time runs out) — only with the agent secret
 router.post('/:id/force-end', agentAuth, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    // Refund hisoblash uchun oldin qolgan vaqtni olish
+    // Get the remaining time first for the refund calculation
     const timeCalc = await client.query(
       `SELECT EXTRACT(EPOCH FROM (ends_at - NOW())) AS remaining_seconds,
               EXTRACT(EPOCH FROM (ends_at - started_at)) AS total_seconds,
@@ -738,7 +738,7 @@ router.post('/:id/force-end', agentAuth, async (req, res) => {
       await client.query('UPDATE computers SET status=$1 WHERE id=$2', ['available', ses.computer_id]);
       await saveVoucherRemainder(client, parseInt(req.params.id));
 
-      // Balans sessionida qolgan vaqtni qaytarish
+      // Refund the remaining time for a balance session
       if (timeCalc.rows.length && ses.user_id) {
         const t = timeCalc.rows[0];
         const remainingSec = Math.max(0, parseFloat(t.remaining_seconds));
@@ -785,7 +785,7 @@ router.post('/:id/force-end', agentAuth, async (req, res) => {
   } finally { client.release(); }
 });
 
-// Desktop agent: kompyuterga yuborilgan o'qilmagan xabarlar (polling)
+// Desktop agent: unread messages sent to the computer (polling)
 router.get('/computer/:computerId/messages', agentAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(
@@ -807,9 +807,9 @@ router.get('/computer/:computerId/messages', agentAuth, async (req, res) => {
   }
 });
 
-// ── AGENT BUYRUQ KANALI ───────────────────────────────────────────────────
+// ── AGENT COMMAND CHANNEL ─────────────────────────────────────────────────
 
-// Heartbeat: agent har 5s da o'z holatini yuboradi
+// Heartbeat: the agent sends its status every 5s
 router.post('/computer/:id/heartbeat', agentAuth, async (req, res) => {
   const { session_id, remaining_ms, ip_address } = req.body;
   try {
@@ -825,7 +825,7 @@ router.post('/computer/:id/heartbeat', agentAuth, async (req, res) => {
   }
 });
 
-// Pending buyruqlar (agent har 3s da so'raydi)
+// Pending commands (the agent asks every 3s)
 router.get('/computer/:id/commands', agentAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(
@@ -840,7 +840,7 @@ router.get('/computer/:id/commands', agentAuth, async (req, res) => {
   }
 });
 
-// Buyruq bajarildi deb belgilash
+// Mark a command as executed
 router.post('/computer/:id/commands/:cmdId/ack', agentAuth, async (req, res) => {
   try {
     await pool.query(
@@ -854,7 +854,7 @@ router.post('/computer/:id/commands/:cmdId/ack', agentAuth, async (req, res) => 
   }
 });
 
-// Anti-cheat: PC da chit topilganda log yozish
+// Anti-cheat: log when a cheat is detected on a PC
 router.post('/computer/:id/anticheat', agentAuth, async (req, res) => {
   const { type, name } = req.body;
   try {
@@ -873,9 +873,9 @@ router.post('/computer/:id/anticheat', agentAuth, async (req, res) => {
   }
 });
 
-// Agent login + voucher tekshirish (PC da login kiritilganda)
-// Agar foydalanuvchining pending voucheri bo'lsa → sessiya boshlanadi
-// Yo'q bo'lsa → faqat user ma'lumoti qaytadi (paket sotib olish uchun)
+// Agent login + voucher check (when a login is entered on the PC)
+// If the user has a pending voucher → the session starts
+// Otherwise → only user info is returned (to buy a package)
 router.post('/agent-login', agentLoginLimiter, async (req, res) => {
   const { phone, password, computer_id } = req.body;
   if (!phone || !password || !computer_id) {
@@ -885,7 +885,7 @@ router.post('/agent-login', agentLoginLimiter, async (req, res) => {
   const bcrypt = require('bcryptjs');
   const client = await pool.connect();
   try {
-    // Foydalanuvchini autentifikatsiya qilish
+    // Authenticate the user
     let formatted = phone.trim().replace(/\s/g, '');
     if (!formatted.startsWith('+')) {
       formatted = formatted.startsWith('998') ? '+' + formatted : '+998' + formatted;
@@ -901,7 +901,7 @@ router.post('/agent-login', agentLoginLimiter, async (req, res) => {
     const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) return res.status(401).json({ error: 'Telefon yoki parol noto\'g\'ri' });
 
-    // Kompyuter va xonani aniqlash
+    // Identify the computer and room
     const compRes = await client.query(
       'SELECT c.id, c.lab_id, c.status FROM computers c WHERE c.id=$1',
       [computer_id]
@@ -909,7 +909,7 @@ router.post('/agent-login', agentLoginLimiter, async (req, res) => {
     if (!compRes.rows.length) return res.status(404).json({ error: 'Kompyuter topilmadi' });
     const comp = compRes.rows[0];
 
-    // Kompyuter band emasligini tekshirish
+    // Check that the computer is not occupied
     const busyRes = await client.query(
       `SELECT s.id, s.user_id, s.ends_at, s.package_id, p.name as package_name, s.started_at
        FROM sessions s LEFT JOIN packages p ON p.id=s.package_id
@@ -918,7 +918,7 @@ router.post('/agent-login', agentLoginLimiter, async (req, res) => {
     );
     if (busyRes.rows.length) {
       const activeSession = busyRes.rows[0];
-      // Agar bu sessiya aynan shu foydalanuvchiniki bo'lsa — qayta kirish (resume)
+      // If this session belongs to this exact user — re-entry (resume)
       if (activeSession.user_id === user.id) {
         const jwt = require('jsonwebtoken');
         const remaining_ms = Math.max(0, new Date(activeSession.ends_at) - Date.now());
@@ -951,7 +951,7 @@ router.post('/agent-login', agentLoginLimiter, async (req, res) => {
       return res.status(409).json({ error: 'Bu kompyuter hozir band', has_voucher: false });
     }
 
-    // Bron tekshirish — bu kompyuterda hozir bron bormi?
+    // Booking check — is there a booking on this computer right now?
     const bookingRes = await client.query(`
       SELECT bk.id, bk.user_id, bk.guest_name, bk.scheduled_at, bk.scheduled_to,
              u.name AS user_name, u.phone AS user_phone
@@ -969,7 +969,7 @@ router.post('/agent-login', agentLoginLimiter, async (req, res) => {
 
     if (bookingRes.rows.length) {
       const bk = bookingRes.rows[0];
-      // Bron boshqa odam uchunmi?
+      // Is the booking for someone else?
       if (bk.user_id && bk.user_id !== user.id) {
         const fmtTime = (d) => new Date(d).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' });
         return res.status(403).json({
@@ -1011,8 +1011,8 @@ router.post('/agent-login', agentLoginLimiter, async (req, res) => {
       };
     }
 
-    // Foydalanuvchining shu xonadagi barcha pending vouchers (kompyuter joylashgan
-    // xonaga mos keluvchi paketlar — packages.room_ids ichida bo'lishi shart)
+    // All of the user's pending vouchers in this room (packages matching the room
+    // the computer is in — must be inside packages.room_ids)
     await client.query('BEGIN');
     const allVouchersRes = await client.query(`
       SELECT v.id, v.package_id, v.remaining_minutes, v.created_at, v.expires_at,
@@ -1039,7 +1039,7 @@ router.post('/agent-login', agentLoginLimiter, async (req, res) => {
       expires_at: v.expires_at,
     }));
 
-    // So'nggi to'lov (balansga kirim) — dropdown'da ko'rsatish uchun
+    // Last payment (balance top-up) — for display in the dropdown
     const lastTopupRes = await client.query(`
       SELECT amount, provider, created_at FROM payments
       WHERE user_id=$1 AND status='completed' AND amount > 0
@@ -1062,7 +1062,7 @@ router.post('/agent-login', agentLoginLimiter, async (req, res) => {
     );
 
     if (allVouchersRes.rows.length === 0) {
-      // Voucher yo'q — faqat user info va token qaytarish
+      // No voucher — return only user info and the token
       await client.query('ROLLBACK');
       return res.json({
         has_voucher: false,
@@ -1073,7 +1073,7 @@ router.post('/agent-login', agentLoginLimiter, async (req, res) => {
       });
     }
 
-    // 1+ voucher bor — har doim tanlash ekranini ko'rsatamiz (auto-start yo'q)
+    // 1+ vouchers — always show the selection screen (no auto-start)
     if (allVouchersRes.rows.length >= 1) {
       await client.query('ROLLBACK');
       return res.json({
@@ -1086,28 +1086,28 @@ router.post('/agent-login', agentLoginLimiter, async (req, res) => {
       });
     }
 
-    // Voucher yo'q — bu yerga hech qachon yetib kelmasligi kerak (yuqorida qaytariladi)
+    // No voucher — this should never be reached (returned above)
     const voucher = allVouchersRes.rows[0];
     const now = getNow();
-    // Sessiya davomiyligini remaining_minutes dan olish (butun paket emas)
+    // Take the session duration from remaining_minutes (not the whole package)
     const endsAt = new Date(now.getTime() + voucher.remaining_minutes * 60 * 1000);
 
-    // Sessiya yaratish — voucher_id bilan bog'lash
+    // Create the session — link it to voucher_id
     const sesRes = await client.query(`
       INSERT INTO sessions (user_id, computer_id, lab_id, package_id, voucher_id, status, amount_paid, payment_type, started_at, ends_at, source)
       VALUES ($1,$2,$3,$4,$5,'active',$6,'balance',$7,$8,'agent') RETURNING *
     `, [user.id, computer_id, comp.lab_id, voucher.package_id, voucher.id, voucher.price, now, endsAt]);
 
-    // Voucherni "active" deb belgilash (sessiya davomida band)
+    // Mark the voucher as "active" (in use during the session)
     await client.query(
       "UPDATE session_vouchers SET status='active' WHERE id=$1",
       [voucher.id]
     );
 
-    // Kompyuter statusini yangilash
+    // Update the computer status
     await client.query("UPDATE computers SET status='busy' WHERE id=$1", [computer_id]);
 
-    // Agar bu foydalanuvchining bronida depozit bo'lgan bo'lsa, qolgan summani yech
+    // If this user's booking had a deposit, charge the remaining amount
     const bkDeposit = await client.query(`
       SELECT id, deposit_amount, package_id FROM bookings
       WHERE computer_id=$1 AND user_id=$2 AND status='confirmed'
@@ -1157,7 +1157,7 @@ router.post('/agent-login', agentLoginLimiter, async (req, res) => {
   } finally { client.release(); }
 });
 
-// Foydalanuvchi mavjud voucherni tanlab sessiya boshlaydi
+// The user picks an existing voucher and starts a session
 router.post('/use-voucher', agentAuth, async (req, res) => {
   const { phone, voucher_id, computer_id } = req.body;
   if (!phone || !voucher_id || !computer_id) {
@@ -1177,7 +1177,7 @@ router.post('/use-voucher', agentAuth, async (req, res) => {
     if (!cRes.rows.length) return res.status(404).json({ error: 'Kompyuter topilmadi' });
     const comp = cRes.rows[0];
 
-    // Kompyuter band emasmi
+    // Is the computer free?
     const bRes = await client.query(
       "SELECT id FROM sessions WHERE computer_id=$1 AND status='active' AND ends_at > NOW()",
       [computer_id]
@@ -1198,7 +1198,7 @@ router.post('/use-voucher', agentAuth, async (req, res) => {
     }
     const voucher = vRes.rows[0];
 
-    // Paket bu xonaga mosligini tekshirish
+    // Check that the package matches this room
     if (Array.isArray(voucher.room_ids) && voucher.room_ids.length > 0
         && comp.room_id && !voucher.room_ids.includes(comp.room_id)) {
       await client.query('ROLLBACK');
@@ -1230,11 +1230,11 @@ router.post('/use-voucher', agentAuth, async (req, res) => {
   } finally { client.release(); }
 });
 
-// ── YORDAM SO'ROVI (mijoz agentdan adminga) ────────────────────────────
+// ── HELP REQUEST (from the customer at the agent to the admin) ─────────
 
 const helpLimiter = require('express-rate-limit')({ windowMs: 5 * 60 * 1000, max: 5, message: { error: 'Juda ko\'p so\'rov' } });
 
-// Agent yordam so'rovi yuboradi (autentifikatsiya majburiy emas)
+// The agent sends a help request (authentication not required)
 router.post('/help-request', helpLimiter, async (req, res) => {
   const { computer_id, user_id, user_name, message } = req.body;
   if (!computer_id) return res.status(400).json({ error: 'computer_id kerak' });
@@ -1253,7 +1253,7 @@ router.post('/help-request', helpLimiter, async (req, res) => {
   }
 });
 
-// Owner uchun barcha pending yordam so'rovlari
+// All pending help requests for the owner
 router.get('/help-requests', auth, async (req, res) => {
   if (req.user.role !== 'owner' && req.user.role !== 'staff') {
     return res.status(403).json({ error: 'Ruxsat yo\'q' });
@@ -1275,7 +1275,7 @@ router.get('/help-requests', auth, async (req, res) => {
   }
 });
 
-// Owner so'rovni hal qildi
+// The owner resolved the request
 router.post('/help-requests/:id/resolve', auth, async (req, res) => {
   if (req.user.role !== 'owner' && req.user.role !== 'staff') {
     return res.status(403).json({ error: 'Ruxsat yo\'q' });
@@ -1296,7 +1296,7 @@ router.post('/help-requests/:id/resolve', auth, async (req, res) => {
   }
 });
 
-// Xonadagi bo'sh kompyuterlar (o'z-o'zini ko'chirish uchun)
+// Free computers in the room (for self-move)
 router.get('/lab-computers', agentAuth, async (req, res) => {
   const { lab_id, exclude_id } = req.query;
   if (!lab_id) return res.status(400).json({ error: 'lab_id kerak' });
@@ -1317,7 +1317,7 @@ router.get('/lab-computers', agentAuth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: process.env.NODE_ENV === 'production' ? 'Ichki server xatosi' : e.message }); }
 });
 
-// Foydalanuvchi o'z sesiyasini boshqa kompga ko'chiradi
+// The user moves their session to another PC
 router.post('/self-move', async (req, res) => {
   const { session_id, new_computer_id, token } = req.body;
   if (!session_id || !new_computer_id || !token) {
@@ -1335,7 +1335,7 @@ router.post('/self-move', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    // Sessiyani tekshirish
+    // Check the session
     const sesRes = await client.query(
       "SELECT * FROM sessions WHERE id=$1 AND user_id=$2 AND status='active'",
       [session_id, userId]
@@ -1343,7 +1343,7 @@ router.post('/self-move', async (req, res) => {
     if (!sesRes.rows.length) return res.status(404).json({ error: 'Sessiya topilmadi' });
     const ses = sesRes.rows[0];
 
-    // Yangi komp bo'shligini tekshirish
+    // Check that the new PC is free
     const compRes = await client.query(
       "SELECT id FROM computers WHERE id=$1 AND status='available' AND (is_broken IS NOT TRUE)",
       [new_computer_id]
@@ -1353,11 +1353,11 @@ router.post('/self-move', async (req, res) => {
       return res.status(409).json({ error: 'Bu kompyuter band yoki mavjud emas' });
     }
 
-    // Eski kompni bo'shatish
+    // Free the old PC
     await client.query("UPDATE computers SET status='available' WHERE id=$1", [ses.computer_id]);
-    // Yangi kompni band qilish
+    // Occupy the new PC
     await client.query("UPDATE computers SET status='busy' WHERE id=$1", [new_computer_id]);
-    // Sesiyani yangi kompga ko'chirish
+    // Move the session to the new PC
     await client.query("UPDATE sessions SET computer_id=$1 WHERE id=$2", [new_computer_id, session_id]);
 
     await client.query('COMMIT');
@@ -1368,7 +1368,7 @@ router.post('/self-move', async (req, res) => {
   } finally { client.release(); }
 });
 
-// Foydalanuvchining pending voucheri borligini tekshirish (agent polling)
+// Check whether the user has a pending voucher (agent polling)
 router.get('/my-voucher', async (req, res) => {
   const { computer_id } = req.query;
   const authHeader = req.headers.authorization;
@@ -1397,7 +1397,7 @@ router.get('/my-voucher', async (req, res) => {
   }
 });
 
-// POST /api/sessions/:id/extend — vaqt qo'shish (balansdan)
+// POST /api/sessions/:id/extend — add time (from balance)
 // body: { minutes: number, from?: 'balance' | 'voucher' }
 router.post('/:id/extend', auth, async (req, res) => {
   const sessionId = parseInt(req.params.id);
@@ -1407,7 +1407,7 @@ router.post('/:id/extend', auth, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    // FOR UPDATE faqat sessiya jadvaliga (LEFT JOIN bilan FOR UPDATE ishlamaydi)
+    // FOR UPDATE on the sessions table only (FOR UPDATE doesn't work with LEFT JOIN)
     const sBase = await client.query(
       `SELECT * FROM sessions WHERE id=$1 AND user_id=$2 AND status='active' FOR UPDATE`,
       [sessionId, req.user.id]

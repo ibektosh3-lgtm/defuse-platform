@@ -1,37 +1,37 @@
 import 'package:flutter/material.dart';
 
-/// Defuse — yangi "Rounded Modern" rang palitra (9-tur dizayn)
+/// Defuse — new "Rounded Modern" color palette (design type 9)
 class AppColors {
-  // Asos
-  static const bg = Color(0xFF0B0B0D);       // ekran fon
-  static const bg2 = Color(0xFF0E0E11);       // bottom bar fon
-  static const panel = Color(0xFF121316);     // karta fon
-  static const panel2 = Color(0xFF16171A);   // ichki karta
-  static const surface = Color(0xFF1E2024);  // separator, divider fon
+  // Base
+  static const bg = Color(0xFF0B0B0D);       // screen background
+  static const bg2 = Color(0xFF0E0E11);       // bottom bar background
+  static const panel = Color(0xFF121316);     // card background
+  static const panel2 = Color(0xFF16171A);   // inner card
+  static const surface = Color(0xFF1E2024);  // separator, divider background
 
-  // Eski nomlar (mavjud kod ishlashi uchun)
+  // Old names (so existing code keeps working)
   static const ink = bg;
   static const ink2 = bg2;
   static const card = panel;
   static const card2 = panel2;
 
-  // Chegaralar
+  // Borders
   static const line = Color(0x14FFFFFF);      // rgba(255,255,255,0.08)
   static const line2 = Color(0xFF26282D);     // 1px border
   static const border = line2;
 
-  // Brend — asosiy
+  // Brand — primary
   static const violet = Color(0xFF7040E0);    // oklch(0.58 0.24 295) — primary
   static const violetLight = Color(0xFF9268E8); // oklch(0.68 0.2 295) — link/active
 
-  // Aksent ranglar
+  // Accent colors
   static const green = Color(0xFF78D94B);     // oklch(0.85 0.19 145) — success/income
   static const gold = Color(0xFFD4A020);      // oklch(0.8 0.16 85) — bonus
-  static const red = Color(0xFFFF3B4E);       // xato
-  static const cyan = Color(0xFF27E0FF);      // rang saqlansin (boshqa joylar)
+  static const red = Color(0xFFFF3B4E);       // error
+  static const cyan = Color(0xFF27E0FF);      // keep this color (used elsewhere)
   static const lime = green;
 
-  // Eski brend nomlari — mavjud kodlar uchun
+  // Old brand names — for existing code
   static const mag = violet;
   static const mag2 = violetLight;
   static const purple = violet;
@@ -39,18 +39,18 @@ class AppColors {
   static const orange = gold;
   static const yellow = gold;
 
-  // Matn
+  // Text
   static const text = Color(0xFFFFFFFF);
-  static const text2 = Color(0xFFC9CCD2);    // ikkilamchi matn
+  static const text2 = Color(0xFFC9CCD2);    // secondary text
   static const muted = Color(0xFF8A8F98);    // placeholder, label
-  static const faint = Color(0xFF5D626B);    // juda xira
+  static const faint = Color(0xFF5D626B);    // very faint
   static const text3 = faint;
 }
 
-/// Defuse shrift oilalari — Archivo + JetBrains Mono
+/// Defuse font families — Archivo + JetBrains Mono
 class AppFonts {
-  static const heading = 'Archivo';      // sarlavha, tugma
-  static const mono = 'ChakraPetch'; // label, meta, kod
+  static const heading = 'Archivo';      // heading, button
+  static const mono = 'ChakraPetch'; // label, meta, code
 
   static TextStyle label({Color color = AppColors.muted, double size = 11}) =>
       TextStyle(fontFamily: 'ChakraPetch', 
@@ -98,12 +98,12 @@ class AppFonts {
         color: color,
       );
 
-  // Eski HudType nomlar — mavjud kodlar uchun
+  // Old HudType names — for existing code
   static TextStyle hudLabel({Color color = AppColors.muted, double size = 10.5}) =>
       label(color: color, size: size);
 }
 
-/// Eski HudType alias — barcha ekranlar ishlashini saqlab qolish uchun
+/// Old HudType alias — to keep all screens working
 class HudType {
   static const display = 'Archivo';
   static const body = 'Archivo';

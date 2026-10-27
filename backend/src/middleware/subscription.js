@@ -1,6 +1,6 @@
 const pool = require('../config/db');
 
-// Obuna faolligini tekshirish uchun cache (10 sekund)
+// Cache for subscription status checks (10 seconds)
 const cache = new Map();
 const TTL = 10_000;
 
@@ -35,10 +35,10 @@ async function fetchSubStatus(ownerId) {
   return value;
 }
 
-// Owner obuna faolligini talab qiladi. Trial va active ruxsat, expired/yo'q → 402.
+// Requires an active owner subscription. Trial and active are allowed, expired/none → 402.
 async function requireActiveSubscription(req, res, next) {
   try {
-    // Staff bo'lsa — owner_id dan foydalanish (auth.js token'ida bor)
+    // For staff — use owner_id (present in the auth.js token)
     const ownerId = req.user.role === 'staff' ? req.user.owner_id : req.user.id;
     if (!ownerId) return res.status(401).json({ error: 'Autentifikatsiya kerak' });
 

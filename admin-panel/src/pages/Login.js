@@ -56,7 +56,7 @@ export default function Login() {
           <div style={{ color: 'var(--text2)', fontSize: 13 }}>Admin Panel</div>
         </div>
 
-        {/* Kirish turi */}
+        {/* Login type */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 24, background: 'var(--bg2)', borderRadius: 10, padding: 4 }}>
           {[['owner', t('loginOwner')], ['staff', t('loginStaff2')]].map(([m, label]) => (
             <button key={m} onClick={() => { setMode(m); setError(''); }} style={{

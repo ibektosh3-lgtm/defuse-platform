@@ -38,7 +38,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
 
   Future<void> _load() async {
     try {
-      // Ikkalasini birdaniga yuklaymiz
+      // Load both at once
       final results = await Future.wait([
         ApiService.getMyBookings().catchError((_) => []),
         ApiService.getMyBookingGroups().catchError((_) => []),
@@ -61,7 +61,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
       if (b['status'] != 'confirmed') continue;
       final id = b['id'] as int;
 
-      // Bron vaqti keldi bildirishnomasi
+      // Booking time has arrived notification
       final arrivalNotifSent = b['arrival_notif_sent_at'];
       if (arrivalNotifSent != null && !_arrivalWarnedIds.contains(id)) {
         _arrivalWarnedIds.add(id);
@@ -71,7 +71,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
         continue;
       }
 
-      // 5 daqiqa qolganida ogohlantirish
+      // Warning when 5 minutes remain
       final expiresAt = b['expires_at'];
       if (expiresAt == null) continue;
       if (_warnedIds.contains(id)) continue;
@@ -412,7 +412,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
           : ListView(
               padding: const EdgeInsets.all(20),
               children: [
-                // Bulk booking guruhlari (yangi)
+                // Bulk booking groups (new)
                 if (_bulkGroups.isNotEmpty) ...[
                   const Padding(
                     padding: EdgeInsets.only(bottom: 12),
@@ -505,7 +505,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
                       ],
                       if (status == 'confirmed') ...[
                         const SizedBox(height: 8),
-                        // Refund sharhi
+                        // Refund note
                         _refundNote(b),
                         const SizedBox(height: 8),
                         Row(
@@ -544,7 +544,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
     );
   }
 
-  // Bulk booking guruhi kartasi
+  // Bulk booking group card
   Widget _bulkGroupCard(Map g) {
     final status = (g['status'] ?? 'pending').toString();
     final seatCount = g['seat_count'] ?? g['total_seats'] ?? 0;
@@ -651,7 +651,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
             Text('$activatedSeats / $seatCount aktivatsiya qilindi',
                 style: const TextStyle(color: AppColors.text3, fontSize: 11)),
           ],
-          // Bekor qilish va vaqt o'zgartirish tugmalari — faqat kutmoqda holatda
+          // Cancel and reschedule buttons — only in the pending state
           if (status == 'pending' || status == 'awaiting_payment') ...[
             const SizedBox(height: 12),
             Row(children: [

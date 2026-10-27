@@ -52,14 +52,14 @@ export default function Dashboard() {
 
   const owner = JSON.parse(localStorage.getItem('owner') || '{}');
 
-  // Filiallar ro'yxatini bir marta olamiz
+  // Fetch the branch list once
   useEffect(() => {
     api.get('/owner/labs').then(r => {
       setLabs(r.data);
       if (!r.data.length) return;
       const validIds = r.data.map(l => l.id);
-      // Agar saqlangan lab_id ro'yxatda bo'lmasa (yoki hali tanlanmagan bo'lsa)
-      // birinchisini avtomatik tanlaymiz
+      // If the saved lab_id isn't in the list (or nothing is selected yet)
+      // select the first one automatically
       if (!labId || !validIds.includes(labId)) {
         const first = r.data[0].id;
         setLabId(first);
@@ -69,7 +69,7 @@ export default function Dashboard() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Filial o'zgarganda saqlaymiz
+  // Save when the branch changes
   useEffect(() => {
     if (labId) localStorage.setItem('dashboard_lab_id', String(labId));
   }, [labId]);
@@ -112,7 +112,7 @@ export default function Dashboard() {
 
   return (
     <div>
-      {/* SARLAVHA + FILIAL TANLASH */}
+      {/* HEADER + BRANCH SELECTOR */}
       <div style={{ marginBottom: 28, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 16 }}>
         <div>
           <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 4 }}>
@@ -121,7 +121,7 @@ export default function Dashboard() {
           <div style={{ color: 'var(--text2)', fontSize: 14 }}>{t('todayStatus')}</div>
         </div>
 
-        {/* FILIAL TANLASH */}
+        {/* BRANCH SELECTOR */}
         {labs.length > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--card2)', border: '1px solid var(--cyan)', borderRadius: 10, padding: '8px 14px' }}>
             <span style={{ fontSize: 16 }}>🏢</span>
@@ -147,7 +147,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* KPI KARTALAR — barcha filiallar bo'yicha jamlangan */}
+      {/* KPI CARDS — aggregated across all branches */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 16 }}>
         <KpiCard icon="🖥️"
           value={`${stats?.active_sessions || 0}/${stats?.total_computers || 0}`}
@@ -164,7 +164,7 @@ export default function Dashboard() {
           label={`Bar / Snack (${stats?.snack_orders_count || 0} ta)`} color="var(--yellow)" />
       </div>
 
-      {/* MIJOZ REYTINGI — o'rtacha baho + oxirgi 3 sharh */}
+      {/* CUSTOMER RATING — average score + last 3 reviews */}
       {reviewStats && Number(reviewStats.total) > 0 && (
         <div style={{
           background: 'var(--card2)', border: '1px solid var(--border)', borderRadius: 14,
@@ -220,7 +220,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* BALANS TO'LDIRISH — Online vs Naqd (haqiqiy daromad) */}
+      {/* BALANCE TOP-UPS — Online vs Cash (actual revenue) */}
       <div style={{
         background: 'var(--card2)', border: '1px solid var(--border)', borderRadius: 14,
         padding: 20, marginBottom: 16,
@@ -262,7 +262,7 @@ export default function Dashboard() {
                     style={{ width: `${(i.val / total) * 100}%`, background: i.color }} />
                 ))}
               </div>
-              {/* har tolov turi */}
+              {/* each payment type */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
                 {items.map(i => {
                   const pct = total > 0 ? Math.round((i.val / total) * 100) : 0;
@@ -282,7 +282,7 @@ export default function Dashboard() {
         })()}
       </div>
 
-      {/* SESSIYA (PC balans sarfi + Bilyard/PS naqd daromad) va SNACK */}
+      {/* SESSIONS (PC balance spend + Billiards/PS cash revenue) and SNACKS */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 32 }}>
         <KpiCard icon="🖱"
           value={`${Number((stats?.session_income || 0) - (stats?.timed_income || 0)).toLocaleString()} so'm`}
@@ -298,10 +298,10 @@ export default function Dashboard() {
           sub={`${stats?.snack_orders_count || 0} ta buyurtma`} />
       </div>
 
-      {/* GRAFIK */}
+      {/* CHARTS */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 20, marginBottom: 24 }}>
 
-        {/* DAROMAD GRAFIGI */}
+        {/* REVENUE CHART */}
         <div style={{ background: 'var(--card2)', border: '1px solid var(--border)', borderRadius: 14, padding: 24 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
             <div style={{ fontSize: 13, fontWeight: 600 }}>{t('revenueChart')}</div>
@@ -338,7 +338,7 @@ export default function Dashboard() {
           </ResponsiveContainer>
         </div>
 
-        {/* SESSIYALAR BAR CHART */}
+        {/* SESSIONS BAR CHART */}
         <div style={{ background: 'var(--card2)', border: '1px solid var(--border)', borderRadius: 14, padding: 24 }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 20 }}>{t('sessions_')} (kunlik)</div>
           <ResponsiveContainer width="100%" height={220}>
@@ -353,7 +353,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* TOP PClar */}
+      {/* TOP PCs */}
       <div style={{ background: 'var(--card2)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden', marginBottom: 24 }}>
         <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', fontSize: 11, color: 'var(--text2)', letterSpacing: 2, textTransform: 'uppercase' }}>
           {t('topComputers')}
@@ -399,7 +399,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* TIZIM HOLATI */}
+      {/* SYSTEM STATUS */}
       <div style={{ background: 'var(--card2)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
         <div style={{ fontSize: 11, color: 'var(--text2)', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 14 }}>Tizim holati</div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>

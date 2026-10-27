@@ -27,7 +27,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-// Helper: PG NUMERIC/BIGINT string sifatida qaytishi mumkin, xavfsiz parse
+// Helper: PG NUMERIC/BIGINT may come back as a string, parse safely
 int _toInt(dynamic v, [int fallback = 0]) {
   if (v == null) return fallback;
   if (v is int) return v;
@@ -58,9 +58,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<Position?> _getUserLocation() async {
-    // Butun geolokatsiya oqimini 4 sekundlik timeout ichida bajaramiz.
-    // Foydalanuvchi ruxsat berishga qaror qilmasa yoki geolokatsiya bloklansa —
-    // home ekran ochilishini kutmasin.
+    // Run the whole geolocation flow within a 4-second timeout.
+    // If the user doesn't decide on the permission or geolocation is blocked,
+    // the home screen shouldn't wait to open.
     try {
       return await Future.any([
         () async {
@@ -82,7 +82,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _load() async {
     try {
-      // Geolokatsiya + me + balances parallel
+      // Geolocation + me + balances in parallel
       final results = await Future.wait([
         _getUserLocation(),
         ApiService.getMe(),
@@ -92,7 +92,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final me = results[1] as Map<String, dynamic>;
       final labBalances = results[2] as List;
 
-      // Labs (geolokatsiyaga bog'liq) + agentState + promos parallel
+      // Labs (depends on geolocation) + agentState + promos in parallel
       final defaultLabId = _defaultLabId;
       final results2 = await Future.wait([
         ApiService.getLabs(lat: pos?.latitude, lng: pos?.longitude),
@@ -103,7 +103,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final state = results2[1] as Map<String, dynamic>?;
       final promos = results2[2] as List;
 
-      // E'lonlar — topilgan lablar bo'yicha parallel
+      // Announcements — in parallel for the labs found
       List announcements = [];
       try {
         final annFutures = labs.take(3).map((lab) {
@@ -225,7 +225,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final avatarUrl = _user?['avatar_url']?.toString();
     final balance = int.tryParse(_user?['balance']?.toString() ?? '0') ?? 0;
 
-    // Xato ushlab qolish uchun try-catch wrapper
+    // try-catch wrapper to catch errors
     try {
       return _buildHome(name, firstLetter, balance, avatarUrl, displayName: displayName);
     } catch (e) {
@@ -261,7 +261,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(18, 56, 18, 100),
           children: [
-            // === Salom + profil ===
+            // === Greeting + profile ===
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -344,14 +344,14 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 18),
 
-            // Aktiv promo banner (dismiss qilinadi)
+            // Active promo banner (dismissible)
             if (_showPromoBanner && _promos.isNotEmpty) ...[
               _buildPromoBanner(_promos.first),
               const SizedBox(height: 12),
             ],
 
 
-            // === Hamyon kartasi (neon ramka) ===
+            // === Wallet card (neon frame) ===
             NeonEdge(
               cornerSize: 13,
               padding: 1.4,
@@ -360,7 +360,7 @@ class _HomeScreenState extends State<HomeScreen> {
               innerPadding: const EdgeInsets.all(18),
               child: Stack(
                 children: [
-                  // ko'rinmas cyan glow (sodda Container o'rniga)
+                  // invisible cyan glow (instead of a plain Container)
                   Positioned(
                     right: -40,
                     bottom: -50,
@@ -381,7 +381,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [
                       Text(LangService.t('lab_balances'), style: HudType.hudLabel(size: 10).copyWith(letterSpacing: 1.6)),
                       const SizedBox(height: 8),
-                      // Har klub balansi alohida — mavjud bo'lganlar
+                      // Each club's balance separately — those that exist
                       if (_labBalances.isEmpty)
                         Text(
                           LangService.t('no_lab_balance'),
@@ -427,7 +427,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 14),
 
-            // === 2 tezkor amal ===
+            // === 2 quick actions ===
             Row(
               children: [
                 Expanded(child: _quickAction(Icons.local_offer_outlined,
@@ -439,7 +439,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
 
-            // === Faol turnirlar banneri ===
+            // === Active tournaments banner ===
             if (_activeTournaments.isNotEmpty) ...[
               const SizedBox(height: 14),
               GestureDetector(
@@ -484,7 +484,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ],
 
-            // === E'lonlar / Chegirmalar (klub egalari yuborgan) ===
+            // === Announcements / Discounts (sent by club owners) ===
             if (_announcements.isNotEmpty) ...[
               const SizedBox(height: 22),
               HudLabel(LangService.t('announcements')),
@@ -517,7 +517,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 12),
 
-            // === Sevimli klublar ===
+            // === Favorite clubs ===
             if (_favoriteLabs.isNotEmpty) ...[
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
@@ -558,7 +558,7 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 16),
             ],
 
-            // === Klublar ===
+            // === Clubs ===
             if (_loading)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 40),

@@ -5,9 +5,9 @@ const crypto = require('crypto');
 const { randomInt } = require('crypto');
 const pool = require('../config/db');
 
-// OTP kodni SHA-256 bilan hash qilish (telefon raqam bilan tuzlanadi —
-// bir xil kod turli telefonlar uchun turlicha hash bo'ladi, hech kim ustma-ust
-// urinishi bilan boshqa akkauntga to'g'ri kelmasin).
+// Hash the OTP code with SHA-256 (salted with the phone number —
+// the same code hashes differently for different phones, so no one
+// can match another account by trying repeatedly).
 function hashOtp(code, phone) {
   return crypto.createHash('sha256').update(code + phone).digest('hex');
 }
@@ -18,7 +18,7 @@ const suspicious = require('../utils/suspiciousActivity');
 
 const JWT_OPTS = { expiresIn: '7d' };
 
-// ── REFERRAL KOD GENERATSIYA ──────────────────────────────────────────────
+// ── REFERRAL CODE GENERATION ──────────────────────────────────────────────
 
 function generateReferralCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -39,7 +39,7 @@ async function createUniqueReferralCode() {
   return code;
 }
 
-// ── LOGIN BLOKLASH ────────────────────────────────────────────────────────
+// ── LOGIN LOCKOUT ─────────────────────────────────────────────────────────
 
 async function checkLockout(phone, ip) {
   return false;
@@ -52,7 +52,7 @@ async function recordAttempt(phone, ip, success) {
   ).catch(() => {});
 }
 
-// Eskirgan yozuvlarni tozalash (har 100-chi sorovda)
+// Clean up expired entries (on every 100th request)
 let cleanupCounter = 0;
 function maybeCleanup() {
   if (++cleanupCounter % 100 === 0) {
@@ -60,7 +60,7 @@ function maybeCleanup() {
   }
 }
 
-// ── RO'YXATDAN O'TISH ─────────────────────────────────────────────────────
+// ── REGISTRATION ──────────────────────────────────────────────────────────
 router.post('/register', async (req, res) => {
   const { name, phone, password, referral_code } = req.body;
 
@@ -80,7 +80,7 @@ router.post('/register', async (req, res) => {
     const exists = await pool.query('SELECT id FROM users WHERE phone=$1', [normalPhone]);
     if (exists.rows.length) return res.status(400).json({ error: 'Bu telefon raqam band' });
 
-    // Referrer tekshirish
+    // Check the referrer
     let referrer = null;
     if (referral_code) {
       const refR = await pool.query('SELECT id FROM users WHERE referral_code=$1', [referral_code.toUpperCase()]);
@@ -98,7 +98,7 @@ router.post('/register', async (req, res) => {
     );
     const user = result.rows[0];
 
-    // Referral bonuslar
+    // Referral bonuses
     if (referrer) {
       await pool.query('UPDATE users SET balance = balance + 15000 WHERE id=$1', [referrer.id]);
       await pool.query('UPDATE users SET balance = balance + 10000 WHERE id=$1', [user.id]);
@@ -111,7 +111,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
-// ── KIRISH ────────────────────────────────────────────────────────────────
+// ── LOGIN ─────────────────────────────────────────────────────────────────
 router.post('/login', loginLimiter, async (req, res) => {
   const { phone, password } = req.body;
   const ip = req.ip;
@@ -159,7 +159,7 @@ router.post('/login', loginLimiter, async (req, res) => {
   }
 });
 
-// ── OTP YUBORISH ──────────────────────────────────────────────────────────
+// ── SEND OTP ──────────────────────────────────────────────────────────────
 router.post('/send-otp', otpLimiter, async (req, res) => {
   const { phone } = req.body;
   if (!validatePhone(phone)) {
@@ -167,22 +167,22 @@ router.post('/send-otp', otpLimiter, async (req, res) => {
   }
 
   const normalPhone = normalizePhone(phone);
-  // crypto.randomInt — kriptografik xavfsiz (Math.random spoofable)
+  // crypto.randomInt — cryptographically secure (Math.random is spoofable)
   const code = String(randomInt(100000, 1000000));
   const codeHash = hashOtp(code, normalPhone);
-  const expiresAt = new Date(Date.now() + 3 * 60 * 1000); // 3 daqiqa
+  const expiresAt = new Date(Date.now() + 3 * 60 * 1000); // 3 minutes
 
   try {
-    // Avvalgi kodlarni bekor qilish
+    // Invalidate previous codes
     await pool.query(`UPDATE otp_codes SET used=true WHERE phone=$1 AND used=false`, [normalPhone]);
 
-    // XAVFSIZLIK: plaintext code endi yozilmaydi (bo'sh string), faqat code_hash saqlanadi
+    // SECURITY: the plaintext code is no longer stored (empty string), only code_hash is saved
     await pool.query(
       'INSERT INTO otp_codes (phone, code, code_hash, expires_at) VALUES ($1,$2,$3,$4)',
       [normalPhone, '', codeHash, expiresAt]
     );
 
-    // TODO: Haqiqiy SMS yuborish (Eskiz, Play Mobile)
+    // TODO: Send real SMS (Eskiz, Play Mobile)
     // await smsService.send(normalPhone, `CyberNet tasdiqlash kodi: ${code}`);
 
     const isDev = process.env.NODE_ENV !== 'production';
@@ -191,7 +191,7 @@ router.post('/send-otp', otpLimiter, async (req, res) => {
     res.json({
       success: true,
       message: 'SMS yuborildi',
-      // Faqat dev/test muhitida
+      // Only in dev/test environments
       ...(isDev && { dev_code: code }),
     });
   } catch (e) {
@@ -199,7 +199,7 @@ router.post('/send-otp', otpLimiter, async (req, res) => {
   }
 });
 
-// ── OTP TASDIQLASH VA KIRISH ──────────────────────────────────────────────
+// ── VERIFY OTP AND LOG IN ─────────────────────────────────────────────────
 router.post('/verify-otp', loginLimiter, async (req, res) => {
   const { phone, code, name, referral_code } = req.body;
 
@@ -209,7 +209,7 @@ router.post('/verify-otp', loginLimiter, async (req, res) => {
   const normalPhone = normalizePhone(phone);
 
   try {
-    // Hash orqali tekshirish (eski plaintext qatorlar ham backward-compatible)
+    // Verify via hash (old plaintext rows remain backward-compatible)
     const inputHash = hashOtp(code, normalPhone);
     const otpRes = await pool.query(`
       SELECT * FROM otp_codes
@@ -226,12 +226,12 @@ router.post('/verify-otp', loginLimiter, async (req, res) => {
 
     await pool.query('UPDATE otp_codes SET used=true WHERE id=$1', [otpRes.rows[0].id]);
 
-    // Foydalanuvchi bor yoki yogligini tekshirish
+    // Check whether the user exists
     let userRes = await pool.query('SELECT id, name, phone, balance, referral_code FROM users WHERE phone=$1', [normalPhone]);
     let user;
 
     if (!userRes.rows.length) {
-      // Yangi foydalanuvchi
+      // New user
       if (!name || name.trim().length < 2) {
         return res.status(400).json({ error: 'Ism kiritilmadi', need_name: true });
       }
@@ -267,25 +267,25 @@ router.post('/verify-otp', loginLimiter, async (req, res) => {
   }
 });
 
-// ── PAROL TIKLASH (SMS OTP orqali) ────────────────────────────────────────
+// ── PASSWORD RESET (via SMS OTP) ──────────────────────────────────────────
 // 1) POST /auth/forgot-password { phone }
-//    → SMS OTP yuboradi (agar telefon ro'yxatda bo'lsa; javob har doim bir xil — telefon farqlash uchun emas)
+//    → sends an SMS OTP (if the phone is registered; the response is always the same, to prevent phone enumeration)
 // 2) POST /auth/reset-password { phone, code, new_password }
-//    → OTP tekshiradi, yangi parol o'rnatadi
+//    → verifies the OTP and sets the new password
 router.post('/forgot-password', otpLimiter, async (req, res) => {
   const { phone } = req.body;
   if (!validatePhone(phone)) return res.status(400).json({ error: 'Notogri telefon raqam' });
   const normalPhone = normalizePhone(phone);
   const code = String(randomInt(100000, 1000000));
   const codeHash = hashOtp(code, normalPhone);
-  const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 daqiqa
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
   try {
-    // Foydalanuvchi mavjudligini enumeratsiya qilishga imkon bermaslik uchun
-    // javob har doim bir xil bo'ladi (mavjud yoki mavjud emas).
+    // To prevent user enumeration,
+    // the response is always the same (whether or not the user exists).
     const userR = await pool.query('SELECT id FROM users WHERE phone=$1', [normalPhone]);
     if (userR.rows.length) {
       await pool.query(`UPDATE otp_codes SET used=true WHERE phone=$1 AND used=false`, [normalPhone]);
-      // XAVFSIZLIK: plaintext code endi yozilmaydi
+      // SECURITY: the plaintext code is no longer stored
       await pool.query(
         'INSERT INTO otp_codes (phone, code, code_hash, expires_at, purpose) VALUES ($1,$2,$3,$4,$5)',
         [normalPhone, '', codeHash, expiresAt, 'reset']
@@ -321,7 +321,7 @@ router.post('/reset-password', loginLimiter, async (req, res) => {
     const userR = await pool.query('SELECT id FROM users WHERE phone=$1', [normalPhone]);
     if (!userR.rows.length) return res.status(400).json({ error: 'Foydalanuvchi topilmadi' });
     const hash = await bcrypt.hash(new_password, 12);
-    // JWT revocation — token_version ni +1 qilamiz + cache invalidate
+    // JWT revocation — increment token_version + invalidate the cache
     await pool.query(
       'UPDATE users SET password_hash=$1, token_version=COALESCE(token_version,0)+1 WHERE id=$2',
       [hash, userR.rows[0].id]
@@ -332,7 +332,7 @@ router.post('/reset-password', loginLimiter, async (req, res) => {
   } catch (e) { safeError(e, res); }
 });
 
-// ── OWNER KIRISH ──────────────────────────────────────────────────────────
+// ── OWNER LOGIN ───────────────────────────────────────────────────────────
 router.post('/owner/login', loginLimiter, async (req, res) => {
   const { email, password } = req.body;
   const ip = req.ip;
@@ -368,7 +368,7 @@ router.post('/owner/login', loginLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Email yoki parol notogri' });
     }
 
-    // 2FA yoqilgan bo'lsa, faqat totp_token bilan to'liq login mumkin
+    // If 2FA is enabled, a full login requires totp_token
     if (owner.totp_enabled) {
       const totpToken = req.body.totp_token;
       if (!totpToken) {
@@ -392,7 +392,7 @@ router.post('/owner/login', loginLimiter, async (req, res) => {
   }
 });
 
-// ── STAFF KIRISH ──────────────────────────────────────────────────────────
+// ── STAFF LOGIN ───────────────────────────────────────────────────────────
 router.post('/staff/login', loginLimiter, async (req, res) => {
   const { phone, pin } = req.body;
   const ip = req.ip;
@@ -420,7 +420,7 @@ router.post('/staff/login', loginLimiter, async (req, res) => {
   }
 });
 
-// ── BALANS TEKSHIRISH ─────────────────────────────────────────────────────
+// ── BALANCE CHECK ─────────────────────────────────────────────────────────
 router.get('/me', auth, async (req, res) => {
   try {
     const result = await pool.query(
@@ -438,7 +438,7 @@ router.get('/me', auth, async (req, res) => {
   }
 });
 
-// Yosh + ota-ona telefoni o'rnatish (Sardor topilmasi — bola tushkun holatda yordamsiz)
+// Set age + parent phone (Sardor's finding — a child in distress had no way to get help)
 router.post('/profile', auth, async (req, res) => {
   const { birth_date, parent_phone, name } = req.body;
   try {
@@ -466,8 +466,8 @@ router.post('/profile', auth, async (req, res) => {
   } catch (e) { safeError(e, res); }
 });
 
-// ── REFERRAL STATISTIKA ───────────────────────────────────────────────────
-// Klient o'z parolini o'zgartiradi
+// ── REFERRAL STATISTICS ───────────────────────────────────────────────────
+// The client changes their own password
 router.post('/change-password', auth, async (req, res) => {
   const { old_password, new_password } = req.body;
   if (!old_password || !new_password) return res.status(400).json({ error: 'Eski va yangi parol kerak' });
@@ -478,7 +478,7 @@ router.post('/change-password', auth, async (req, res) => {
     const ok = await bcrypt.compare(old_password, userR.rows[0].password_hash);
     if (!ok) return res.status(400).json({ error: 'Eski parol noto\'g\'ri' });
     const hash = await bcrypt.hash(new_password, 12);
-    // JWT revocation — barcha eski tokenlar bekor bo'ladi
+    // JWT revocation — all old tokens become invalid
     await pool.query(
       'UPDATE users SET password_hash=$1, token_version=COALESCE(token_version,0)+1 WHERE id=$2',
       [hash, req.user.id]
@@ -490,7 +490,7 @@ router.post('/change-password', auth, async (req, res) => {
   }
 });
 
-// Owner uchun kuchli parol siyosati bilan alohida endpoint
+// Separate endpoint for owners with a strong password policy
 router.post('/owner/change-password', auth, async (req, res) => {
   if (req.user.role !== 'owner') return res.status(403).json({ error: 'Owner huquqi kerak' });
   const { old_password, new_password } = req.body;
@@ -570,7 +570,7 @@ router.post('/telegram', loginLimiter, async (req, res) => {
   const tgData = verifyTelegramInitData(init_data, botToken);
   if (!tgData) return res.status(401).json({ error: 'Telegram imzo xato' });
 
-  // auth_date eskimagan bo'lsin (5 daqiqa)
+  // auth_date must not be stale (5 minutes)
   const authDate = parseInt(tgData.auth_date || '0');
   if (Date.now() / 1000 - authDate > 300) {
     return res.status(401).json({ error: 'initData eskirgan, qayta oching' });
@@ -581,11 +581,11 @@ router.post('/telegram', loginLimiter, async (req, res) => {
   if (!tgId) return res.status(400).json({ error: 'Telegram user ID topilmadi' });
 
   try {
-    // Mavjud foydalanuvchini qidirish
+    // Look up an existing user
     let userRow = await pool.query('SELECT * FROM users WHERE telegram_id=$1', [tgId]);
 
     if (!userRow.rows.length) {
-      // Yangi foydalanuvchi yaratish
+      // Create a new user
       const name = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') || `tg_${tgId}`;
       const referralCode = await createUniqueReferralCode();
       userRow = await pool.query(

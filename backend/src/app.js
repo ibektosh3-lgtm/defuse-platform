@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 require('dotenv').config({ override: false });
 
-// XAVFSIZLIK: majburiy env variables — production'da fallback ta'qiqlangan
+// SECURITY: required env variables — fallbacks are forbidden in production
 if (!process.env.JWT_SECRET) {
   throw new Error('JWT_SECRET .env da o\'rnatilishi shart');
 }
@@ -15,25 +15,25 @@ if (process.env.NODE_ENV === 'production' && process.env.JWT_SECRET.length < 32)
 
 const pool = require('./config/db');
 
-// ── MIGRATSIYA FUNKSIYASI ─────────────────────────────────────────────────
+// ── MIGRATION FUNCTION ────────────────────────────────────────────────────
 async function migrate() {
   const run = async (sql) => {
     try { await pool.query(sql); }
     catch (e) { console.error('MIGRATION ERROR:', e.message); }
   };
 
-  // 1. Schema — asosiy 8 jadval (toza bazada zarur, IF NOT EXISTS — xavfsiz)
+  // 1. Schema — 8 core tables (required on a clean database; IF NOT EXISTS — safe)
   const schema = fs.readFileSync(path.join(__dirname, 'models', 'schema.sql'), 'utf8');
   await pool.query(schema);
 
-  // 2. sessions ustunlari
+  // 2. sessions columns
   await run(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS guest_name VARCHAR(100)`);
   await run(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS payment_type VARCHAR(20) DEFAULT 'balance'`);
   await run(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS lab_id INTEGER REFERENCES labs(id)`);
   await run(`ALTER TABLE sessions ALTER COLUMN user_id DROP NOT NULL`);
   await run(`UPDATE sessions s SET lab_id = c.lab_id FROM computers c WHERE c.id = s.computer_id AND s.lab_id IS NULL`);
 
-  // 3. Smenalar jadvali
+  // 3. Shifts table
   await run(`
     CREATE TABLE IF NOT EXISTS shifts (
       id SERIAL PRIMARY KEY,
@@ -70,7 +70,7 @@ async function migrate() {
   await run(`ALTER TABLE owners ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN DEFAULT false`);
   await run(`UPDATE owners SET is_super_admin=true WHERE email='admin@cybernet.uz' AND is_super_admin IS NOT TRUE`);
 
-  // 6. Obuna rejalari
+  // 6. Subscription plans
   await run(`
     CREATE TABLE IF NOT EXISTS subscription_plans (
       id SERIAL PRIMARY KEY,
@@ -90,7 +90,7 @@ async function migrate() {
     ON CONFLICT (id) DO NOTHING
   `);
 
-  // 7. OTP kodlar
+  // 7. OTP codes
   await run(`
     CREATE TABLE IF NOT EXISTS otp_codes (
       id SERIAL PRIMARY KEY,
@@ -102,7 +102,7 @@ async function migrate() {
     )
   `);
 
-  // 8. Login bloklash
+  // 8. Login lockout
   await run(`
     CREATE TABLE IF NOT EXISTS login_attempts (
       id SERIAL PRIMARY KEY,
@@ -113,7 +113,7 @@ async function migrate() {
     )
   `);
 
-  // 9. Egalar obunalari
+  // 9. Owner subscriptions
   await run(`
     CREATE TABLE IF NOT EXISTS owner_subscriptions (
       id SERIAL PRIMARY KEY,
@@ -129,7 +129,7 @@ async function migrate() {
     )
   `);
 
-  // 10. O'yinlar
+  // 10. Games
   await run(`
     CREATE TABLE IF NOT EXISTS games (
       id SERIAL PRIMARY KEY,
@@ -148,7 +148,7 @@ async function migrate() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
-  // Eski jadvalga hero_image_path ustun qo'shish (idempotent)
+  // Add hero_image_path column to the old table (idempotent)
   await run(`ALTER TABLE games ADD COLUMN IF NOT EXISTS hero_image_path VARCHAR(300)`);
 
   // 11. Snack-bar
@@ -192,7 +192,7 @@ async function migrate() {
       paid_at TIMESTAMPTZ
     )
   `);
-  // Eski jadvallarga yangi ustunlar (idempotent)
+  // New columns on old tables (idempotent)
   await run(`ALTER TABLE snack_orders ADD COLUMN IF NOT EXISTS acceptance_status VARCHAR(20) DEFAULT 'pending'`);
   await run(`ALTER TABLE snack_orders ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ`);
   await run(`ALTER TABLE snack_orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ`);
@@ -209,15 +209,15 @@ async function migrate() {
     )
   `);
 
-  // 12. Kompyuter turlari
+  // 12. Computer types
   await run(`ALTER TABLE computers ADD COLUMN IF NOT EXISTS type VARCHAR(20) DEFAULT 'pc'`);
   await run(`ALTER TABLE computers ADD COLUMN IF NOT EXISTS hourly_rate NUMERIC(10,2)`);
-  // 12b. GL litsenziya + hardware fingerprint (2026-08 anti-piracy)
+  // 12b. GL license + hardware fingerprint (2026-08 anti-piracy)
   await run(`ALTER TABLE computers ADD COLUMN IF NOT EXISTS last_hardware_id VARCHAR(128)`);
   await run(`ALTER TABLE computers ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ`);
   await run(`ALTER TABLE computers ADD COLUMN IF NOT EXISTS last_app_version VARCHAR(20)`);
 
-  // 13. Promo-kodlar
+  // 13. Promo codes
   await run(`
     CREATE TABLE IF NOT EXISTS promo_codes (
       id SERIAL PRIMARY KEY,
@@ -245,7 +245,7 @@ async function migrate() {
     )
   `);
 
-  // 14. Sodiqlik dasturi
+  // 14. Loyalty program
   await run(`ALTER TABLE users ADD COLUMN IF NOT EXISTS loyalty_points INTEGER DEFAULT 0`);
   await run(`
     CREATE TABLE IF NOT EXISTS loyalty_transactions (
@@ -259,7 +259,7 @@ async function migrate() {
     )
   `);
 
-  // 15. Turnirlar
+  // 15. Tournaments
   await run(`
     CREATE TABLE IF NOT EXISTS tournaments (
       id SERIAL PRIMARY KEY,
@@ -289,7 +289,7 @@ async function migrate() {
     )
   `);
 
-  // 16. Push bildirishnomalar
+  // 16. Push notifications
   await run(`
     CREATE TABLE IF NOT EXISTS user_fcm_tokens (
       id SERIAL PRIMARY KEY,
@@ -323,7 +323,7 @@ async function migrate() {
     )
   `);
 
-  // 17. Shifts kengaytma ustunlari
+  // 17. Shifts extension columns
   await run(`ALTER TABLE shifts ADD COLUMN IF NOT EXISTS closing_cash NUMERIC(12,2) DEFAULT 0`);
   await run(`ALTER TABLE shifts ADD COLUMN IF NOT EXISTS cash_shortage NUMERIC(12,2) DEFAULT 0`);
   await run(`ALTER TABLE shifts ADD COLUMN IF NOT EXISTS expected_cash NUMERIC(12,2) DEFAULT 0`);
@@ -333,7 +333,7 @@ async function migrate() {
   await run(`ALTER TABLE shifts ADD COLUMN IF NOT EXISTS snack_revenue NUMERIC(12,2) DEFAULT 0`);
   await run(`ALTER TABLE shifts ADD COLUMN IF NOT EXISTS snack_cash NUMERIC(12,2) DEFAULT 0`);
 
-  // 18. Xarajatlar
+  // 18. Expenses
   await run(`
     CREATE TABLE IF NOT EXISTS expenses (
       id SERIAL PRIMARY KEY,
@@ -364,7 +364,7 @@ async function migrate() {
     )
   `);
 
-  // 20. Xodimlar va oylik
+  // 20. Staff and payroll
   await run(`
     CREATE TABLE IF NOT EXISTS staff (
       id SERIAL PRIMARY KEY,
@@ -459,14 +459,14 @@ async function migrate() {
     )
   `);
 
-  // 25. Guruh bron ustunlari
+  // 25. Group booking columns
   await run(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS is_group BOOLEAN DEFAULT false`);
   await run(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS group_size INTEGER DEFAULT 1`);
   await run(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS deposit_amount NUMERIC(12,2) DEFAULT 0`);
   await run(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS deposit_paid BOOLEAN DEFAULT false`);
   await run(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS zone VARCHAR(50)`);
 
-  // 26. Texnik xizmat
+  // 26. Maintenance
   await run(`ALTER TABLE computers ADD COLUMN IF NOT EXISTS gpu VARCHAR(100)`);
   await run(`ALTER TABLE computers ADD COLUMN IF NOT EXISTS ram VARCHAR(50)`);
   await run(`ALTER TABLE computers ADD COLUMN IF NOT EXISTS storage VARCHAR(50)`);
@@ -490,7 +490,7 @@ async function migrate() {
   await run(`ALTER TABLE users ADD COLUMN IF NOT EXISTS xp INTEGER DEFAULT 0`);
   await run(`ALTER TABLE users ADD COLUMN IF NOT EXISTS user_level INTEGER DEFAULT 1`);
 
-  // 28. Fiskal kassa (F2-1)
+  // 28. Fiscal cash register (F2-1)
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS fiscal_enabled BOOLEAN DEFAULT false`);
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS kkm_id VARCHAR(100)`);
   await run(`
@@ -514,7 +514,7 @@ async function migrate() {
   await run(`ALTER TABLE shifts ADD COLUMN IF NOT EXISTS fiscal_total NUMERIC(12,2) DEFAULT 0`);
   await run(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS fiscal_receipt_id INTEGER REFERENCES fiscal_receipts(id)`);
 
-  // 29. Agent buyruq kanali + heartbeat + WoL
+  // 29. Agent command channel + heartbeat + WoL
   await run(`ALTER TABLE computers ADD COLUMN IF NOT EXISTS mac_address VARCHAR(17)`);
   await run(`
     CREATE TABLE IF NOT EXISTS computer_heartbeats (
@@ -537,7 +537,7 @@ async function migrate() {
     )
   `);
 
-  // 31. Session voucherlar (admin tomonidan oldindan to'langan paketlar)
+  // 31. Session vouchers (packages prepaid by the admin)
   await run(`
     CREATE TABLE IF NOT EXISTS session_vouchers (
       id                SERIAL PRIMARY KEY,
@@ -553,14 +553,14 @@ async function migrate() {
   await run(`ALTER TABLE session_vouchers ADD COLUMN IF NOT EXISTS remaining_minutes INTEGER NOT NULL DEFAULT 0`);
   await run(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS voucher_id INTEGER REFERENCES session_vouchers(id)`);
 
-  // 30. PC xarita bron (availability + atomic overlap constraint)
+  // 30. PC map booking (availability + atomic overlap constraint)
   await run(`CREATE EXTENSION IF NOT EXISTS btree_gist`);
   await run(`ALTER TABLE computers ADD COLUMN IF NOT EXISTS zone VARCHAR(30) DEFAULT 'standart'`);
   await run(`ALTER TABLE computers ADD COLUMN IF NOT EXISTS row_no INTEGER`);
   await run(`ALTER TABLE computers ADD COLUMN IF NOT EXISTS col_no INTEGER`);
   await run(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS scheduled_to TIMESTAMPTZ`);
   await run(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS booking_range tstzrange`);
-  // Mavjud bronlarni backfill qilish
+  // Backfill existing bookings
   await run(`
     UPDATE bookings b
     SET scheduled_to = b.scheduled_at + (p.duration_minutes * INTERVAL '1 minute'),
@@ -568,7 +568,7 @@ async function migrate() {
     FROM packages p
     WHERE b.package_id = p.id AND b.scheduled_to IS NULL AND b.scheduled_at IS NOT NULL
   `);
-  // Exclusion constraint — stored column'ga, function expression emas (IMMUTABLE muammosidan qochish uchun)
+  // Exclusion constraint — on a stored column, not a function expression (avoids the IMMUTABLE issue)
   await run(`
     ALTER TABLE bookings ADD CONSTRAINT bookings_no_overlap
       EXCLUDE USING GIST (
@@ -577,7 +577,7 @@ async function migrate() {
       ) WHERE (status NOT IN ('cancelled','expired') AND booking_range IS NOT NULL)
   `);
 
-  // 32. Rooms jadvali + PC layout pozitsiyalari
+  // 32. Rooms table + PC layout positions
   await run(`
     CREATE TABLE IF NOT EXISTS rooms (
       id          SERIAL PRIMARY KEY,
@@ -603,37 +603,37 @@ async function migrate() {
   await run(`ALTER TABLE computers ADD COLUMN IF NOT EXISTS room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL`);
   await run(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS guest_name VARCHAR(100)`);
 
-  // 33. Payments jadvali kengaytmasi — admin topup lab bilan bog'lash
+  // 33. Payments table extension — link admin top-ups to a lab
   await run(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS lab_id INTEGER REFERENCES labs(id)`);
   await run(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS owner_id INTEGER REFERENCES owners(id)`);
-  // Topup manbasi: 'pc' (desktop-agent), 'mobile' (Flutter app), 'admin' (admin panel), 'kassa' (POS)
+  // Top-up source: 'pc' (desktop-agent), 'mobile' (Flutter app), 'admin' (admin panel), 'kassa' (POS)
   await run(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS source VARCHAR(20)`);
-  // Legacy admin_topup lar avtomatik 'admin' manba deb belgilanadi
+  // Legacy admin_topup rows are automatically marked with source 'admin'
   await run(`UPDATE payments SET source='admin' WHERE source IS NULL AND provider='admin_topup'`);
 
-  // 34. Paketlar uchun xona (room) bog'lanishi — massiv (bir nechta xona)
+  // 34. Room links for packages — array (multiple rooms)
   await run(`ALTER TABLE packages ADD COLUMN IF NOT EXISTS room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL`);
   await run(`ALTER TABLE packages ADD COLUMN IF NOT EXISTS room_ids INTEGER[] DEFAULT '{}'`);
-  // Mavjud room_id → room_ids ga ko'chirish
+  // Migrate existing room_id → room_ids
   await run(`UPDATE packages SET room_ids = ARRAY[room_id] WHERE room_id IS NOT NULL AND (room_ids IS NULL OR room_ids = '{}')`);
 
-  // 35. Sessiyani balansdan avtomatik uzaytirish
+  // 35. Auto-extend sessions from balance
   await run(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS extend_from_balance BOOLEAN DEFAULT false`);
 
-  // 36. Qarz tizimi — foydalanuvchida qarz summasi
+  // 36. Debt system — user's debt amount
   await run(`ALTER TABLE users ADD COLUMN IF NOT EXISTS debt NUMERIC(12,2) DEFAULT 0`);
-  // payments jadvaliga qarz belgisi
+  // Debt flag on the payments table
   await run(`ALTER TABLE payments ADD COLUMN IF NOT EXISTS is_debt BOOLEAN DEFAULT false`);
 
-  // 37. Bar qarz tizimi — snack_orders ga user_id va is_debt
+  // 37. Bar debt system — user_id and is_debt on snack_orders
   await run(`ALTER TABLE snack_orders ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL`);
   await run(`ALTER TABLE snack_orders ADD COLUMN IF NOT EXISTS is_debt BOOLEAN DEFAULT false`);
 
-  // 38. Snack mahsulotlarga barkod
+  // 38. Barcodes for snack products
   await run(`ALTER TABLE snack_products ADD COLUMN IF NOT EXISTS barcode VARCHAR(100)`);
   await run(`CREATE UNIQUE INDEX IF NOT EXISTS snack_products_barcode_idx ON snack_products(barcode) WHERE barcode IS NOT NULL`);
 
-  // 39. Snack smena (shift) tizimi va inventarizatsiya
+  // 39. Snack shift system and inventory
   await run(`
     CREATE TABLE IF NOT EXISTS snack_shifts (
       id SERIAL PRIMARY KEY,
@@ -647,7 +647,7 @@ async function migrate() {
       total_returns NUMERIC(12,2) DEFAULT 0
     )
   `);
-  // 40. Xodim ish smena tizimi
+  // 40. Staff work shift system
   await run(`
     CREATE TABLE IF NOT EXISTS staff_shifts (
       id SERIAL PRIMARY KEY,
@@ -701,7 +701,7 @@ async function migrate() {
     )
   `);
 
-  // 41. Bron avtomatik yaroqsizlik tizimi
+  // 41. Automatic booking expiry system
   await run(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`);
   await run(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS warn_sent_at TIMESTAMPTZ`);
   await run(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS arrival_notif_sent_at TIMESTAMPTZ`);
@@ -714,11 +714,11 @@ async function migrate() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
-  // Mavjud confirmed bronlarga expires_at qo'yish (agar yo'q bo'lsa)
+  // Set expires_at on existing confirmed bookings (if missing)
   await run(`UPDATE bookings SET expires_at = created_at + INTERVAL '30 minutes'
              WHERE status='confirmed' AND expires_at IS NULL AND created_at IS NOT NULL`);
 
-  // Kassa smenasi uchun qo'shimcha statistika ustunlari
+  // Extra statistics columns for cash desk shifts
   await run(`ALTER TABLE shifts ADD COLUMN IF NOT EXISTS new_clients_count INTEGER DEFAULT 0`);
   await run(`ALTER TABLE shifts ADD COLUMN IF NOT EXISTS session_click NUMERIC(12,2) DEFAULT 0`);
   await run(`ALTER TABLE shifts ADD COLUMN IF NOT EXISTS session_terminal NUMERIC(12,2) DEFAULT 0`);
@@ -743,11 +743,11 @@ async function migrate() {
     )
   `);
 
-  // 42. Auto-shutdown sozlamasi
+  // 42. Auto-shutdown setting
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS auto_shutdown_enabled BOOLEAN DEFAULT false`);
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS auto_shutdown_delay INTEGER DEFAULT 15`);
 
-  // 43. Yotib qolgan faol sessiyalarni tozalash (vaqti o'tgan lekin status='active')
+  // 43. Clean up stale active sessions (time expired but status='active')
   await run(`
     UPDATE sessions SET status='completed', ended_at=COALESCE(ends_at, NOW())
     WHERE status='active' AND ends_at IS NOT NULL AND ends_at < NOW()
@@ -761,12 +761,12 @@ async function migrate() {
       )
   `);
 
-  // 44. Bron depozit tizimi
+  // 44. Booking deposit system
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS booking_deposit NUMERIC(12,2) DEFAULT 0`);
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS snack_enabled BOOLEAN DEFAULT true`);
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS launcher_theme VARCHAR(50) DEFAULT 'hud'`);
 
-  // Tema xaridlari — owner qaysi dizaynlarni sotib olgani
+  // Theme purchases — which designs the owner has bought
   await run(`
     CREATE TABLE IF NOT EXISTS owner_theme_purchases (
       id           SERIAL PRIMARY KEY,
@@ -782,7 +782,7 @@ async function migrate() {
     )
   `);
 
-  // To'ldirish bonusi qoidalari (har filial uchun alohida)
+  // Top-up bonus rules (separate for each branch)
   await run(`
     CREATE TABLE IF NOT EXISTS topup_bonuses (
       id SERIAL PRIMARY KEY,
@@ -795,7 +795,7 @@ async function migrate() {
   `);
   await run(`CREATE INDEX IF NOT EXISTS idx_topup_bonuses_lab ON topup_bonuses(lab_id, is_active)`);
 
-  // Yordam so'rovi (mijoz tomonidan agentdan yuboriladi)
+  // Help request (sent by the customer from the agent)
   await run(`
     CREATE TABLE IF NOT EXISTS help_requests (
       id SERIAL PRIMARY KEY,
@@ -813,7 +813,7 @@ async function migrate() {
   await run(`CREATE INDEX IF NOT EXISTS idx_help_requests_lab_status ON help_requests(lab_id, status)`);
   await run(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS deposit_amount NUMERIC(12,2) DEFAULT 0`);
 
-  // 45. Dasturlar katalogi (shell launcher)
+  // 45. App catalog (shell launcher)
   await run(`
     CREATE TABLE IF NOT EXISTS lab_apps (
       id SERIAL PRIMARY KEY,
@@ -829,8 +829,8 @@ async function migrate() {
     )
   `);
 
-  // ── XAVFSIZLIK JADVALLARI ────────────────────────────────────────────────
-  // Login tarixi — har muvaffaqiyatli va muvaffaqiyatsiz kirish yozib boriladi
+  // ── SECURITY TABLES ──────────────────────────────────────────────────────
+  // Login history — every successful and failed login is recorded
   await run(`
     CREATE TABLE IF NOT EXISTS login_history (
       id SERIAL PRIMARY KEY,
@@ -845,7 +845,7 @@ async function migrate() {
   `);
   await run(`CREATE INDEX IF NOT EXISTS idx_login_history_subject ON login_history(subject_type, subject_id, created_at DESC)`);
 
-  // 2FA (Google Authenticator TOTP) — owner uchun
+  // 2FA (Google Authenticator TOTP) — for owners
   await run(`ALTER TABLE owners ADD COLUMN IF NOT EXISTS totp_secret VARCHAR(64)`);
   await run(`ALTER TABLE owners ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN DEFAULT false`);
   await run(`ALTER TABLE owners ADD COLUMN IF NOT EXISTS totp_backup_codes JSONB DEFAULT '[]'::jsonb`);
@@ -858,10 +858,10 @@ async function migrate() {
   // Password reset OTP purpose
   await run(`ALTER TABLE otp_codes ADD COLUMN IF NOT EXISTS purpose VARCHAR(30) DEFAULT 'login'`);
 
-  // Snack image_url (Nodira topilma — emoji-only cringe, rasm kerak)
+  // Snack image_url (Nodira's finding — emoji-only looked cringe, images needed)
   await run(`ALTER TABLE snack_products ADD COLUMN IF NOT EXISTS image_url VARCHAR(500)`);
 
-  // Real snack seed — har lab uchun (Nodira topilma: DB'da faqat 1 ta "hnjiy" edi)
+  // Real snack seed — per lab (Nodira's finding: the DB had only 1 item, "hnjiy")
   await run(`
     INSERT INTO snack_products (lab_id, name, price, emoji, stock, is_active, image_url)
     SELECT l.id, s.name, s.price, s.emoji, 100, true, s.image_url FROM labs l,
@@ -903,7 +903,7 @@ async function migrate() {
   `);
 
 
-  // Farrux topilma: Happy hour seed — kechqurun 18:00-22:00 -25% chegirma
+  // Farrux's finding: Happy hour seed — evenings 18:00-22:00, 25% off
   await run(`
     INSERT INTO happy_hours (lab_id, name, day_of_week, hour_from, hour_to, discount_pct, is_active)
     SELECT l.id, h.name, h.day_of_week, h.hour_from, h.hour_to, h.discount_pct, true
@@ -919,7 +919,7 @@ async function migrate() {
     )
   `);
 
-  // Seed turnir — Doniyor/Jasur topilmasi: /api/tournaments/public bo'sh []
+  // Seed tournament — Doniyor/Jasur's finding: /api/tournaments/public was empty []
   await run(`
     INSERT INTO tournaments (lab_id, name, game, description, start_at, end_at, max_players, entry_fee, prize_pool, status)
     SELECT l.id, t.name, t.game, t.description, t.start_at, t.end_at, t.max_players, t.entry_fee, t.prize_pool, t.status
@@ -941,7 +941,7 @@ async function migrate() {
     )
   `);
 
-  // Yosh gamerlar va qizlar uchun o'yinlar (Sardor: Fortnite yo'q, Nodira: Roblox/Sims/Genshin yo'q)
+  // Games for younger gamers and girls (Sardor: no Fortnite, Nodira: no Roblox/Sims/Genshin)
   await run(`
     INSERT INTO games (lab_id, owner_id, name, genre, age_rating, is_active, cover_path, description)
     SELECT l.id, l.owner_id, g.name, g.genre, g.age_rating, true, g.cover_path, g.description FROM labs l,
@@ -967,9 +967,9 @@ async function migrate() {
     )
   `);
 
-  // Age rating — o'yinlar uchun (Sardor topilmasi: 18+ cheklovi yo'q edi)
+  // Age rating — for games (Sardor's finding: there was no 18+ restriction)
   await run(`ALTER TABLE games ADD COLUMN IF NOT EXISTS age_rating INTEGER DEFAULT 0`);
-  // Age rating: 0=hamma, 12=12+, 16=16+, 18=18+
+  // Age rating: 0=everyone, 12=12+, 16=16+, 18=18+
   await run(`
     UPDATE games SET age_rating = 18 WHERE
       LOWER(name) SIMILAR TO '%(gta|grand theft|cyberpunk|mortal kombat|resident evil|mafia|god of war|dying light|dead space|doom|call of duty|rainbow six|far cry|red dead|witcher 3|elden ring|dark souls|bloodborne)%'
@@ -981,20 +981,20 @@ async function migrate() {
       AND age_rating = 0
   `);
 
-  // Foydalanuvchi tug'ilgan sanasi + ota-ona telefon
+  // User date of birth + parent phone
   await run(`ALTER TABLE users ADD COLUMN IF NOT EXISTS birth_date DATE`);
   await run(`ALTER TABLE users ADD COLUMN IF NOT EXISTS parent_phone VARCHAR(20)`);
 
-  // Kunlik login bonus (Muzaffar topilmasi)
+  // Daily login bonus (Muzaffar's finding)
   await run(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_bonus_at DATE`);
   await run(`ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_id VARCHAR(50) UNIQUE`);
   await run(`ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_username VARCHAR(100)`);
 
-  // Ota-ona yordam telefoni (Sardor topilmasi)
+  // Parent help phone (Sardor's finding)
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS parent_help_phone VARCHAR(20)`);
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS emergency_phone VARCHAR(20)`);
 
-  // Wallet transfer (Muzaffar topilmasi — do'stga pul jo'natish)
+  // Wallet transfer (Muzaffar's finding — send money to a friend)
   await run(`
     CREATE TABLE IF NOT EXISTS wallet_transfers (
       id SERIAL PRIMARY KEY,
@@ -1020,14 +1020,14 @@ async function migrate() {
     )
   `);
 
-  // ── LAB INFO EXTRAS (rasm galereyasi, ish vaqti, telefon) ──────────
+  // ── LAB INFO EXTRAS (photo gallery, opening hours, phone) ──────────
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS phone VARCHAR(20)`);
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS working_hours VARCHAR(100)`);
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS photos JSONB DEFAULT '[]'::jsonb`);
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS instagram VARCHAR(200)`);
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS telegram VARCHAR(200)`);
 
-  // ── PRE-ORDER (bron uchun oldindan bar buyurtma) ─────────────────────
+  // ── PRE-ORDER (bar pre-order for a booking) ──────────────────────────
   await run(`ALTER TABLE snack_orders ADD COLUMN IF NOT EXISTS booking_group_id INTEGER`);
   await run(`ALTER TABLE snack_orders ADD COLUMN IF NOT EXISTS pre_order BOOLEAN DEFAULT false`);
   await run(`ALTER TABLE snack_orders ADD COLUMN IF NOT EXISTS notify_at TIMESTAMPTZ`);
@@ -1039,7 +1039,7 @@ async function migrate() {
   await run(`CREATE INDEX IF NOT EXISTS idx_snack_orders_booking ON snack_orders(booking_group_id) WHERE booking_group_id IS NOT NULL`);
   await run(`CREATE INDEX IF NOT EXISTS idx_snack_orders_notify ON snack_orders(notify_at) WHERE pre_order = true AND admin_ack_at IS NULL`);
 
-  // ── FEEDBACKS (shikoyat/taklif — anonim) ─────────────────────────────
+  // ── FEEDBACKS (complaints/suggestions — anonymous) ───────────────────
   await run(`
     CREATE TABLE IF NOT EXISTS feedbacks (
       id SERIAL PRIMARY KEY,
@@ -1059,7 +1059,7 @@ async function migrate() {
   `);
   await run(`CREATE INDEX IF NOT EXISTS idx_feedbacks_lab_status ON feedbacks(lab_id, status, created_at DESC)`);
 
-  // ── BULK BOOKING (10 tagacha PC + grace period) ────────────────────────
+  // ── BULK BOOKING (up to 10 PCs + grace period) ─────────────────────────
   await run(`
     CREATE TABLE IF NOT EXISTS booking_groups (
       id SERIAL PRIMARY KEY,
@@ -1098,7 +1098,7 @@ async function migrate() {
   await run(`CREATE INDEX IF NOT EXISTS idx_booking_seats_phone ON booking_seats(assigned_phone) WHERE assigned_phone IS NOT NULL`);
   await run(`CREATE INDEX IF NOT EXISTS idx_booking_seats_computer ON booking_seats(computer_id, status)`);
 
-  // IP whitelist — admin panel uchun ixtiyoriy qo'shimcha himoya
+  // IP whitelist — optional extra protection for the admin panel
   await run(`
     CREATE TABLE IF NOT EXISTS ip_whitelist (
       id SERIAL PRIMARY KEY,
@@ -1111,7 +1111,7 @@ async function migrate() {
   `);
   await run(`CREATE INDEX IF NOT EXISTS idx_ip_whitelist_owner ON ip_whitelist(owner_id, enabled)`);
 
-  // Refund tasdiqlash (2 kishi approval)
+  // Refund approval (2-person approval)
   await run(`
     CREATE TABLE IF NOT EXISTS refund_requests (
       id SERIAL PRIMARY KEY,
@@ -1134,7 +1134,7 @@ async function migrate() {
   await run(`CREATE INDEX IF NOT EXISTS idx_refund_requests_lab_status ON refund_requests(lab_id, status)`);
   await run(`ALTER TABLE refund_requests ADD COLUMN IF NOT EXISTS bonus_amount NUMERIC(12,2) DEFAULT 0`);
 
-  // Shubhali aktivlik jurnali
+  // Suspicious activity log
   await run(`
     CREATE TABLE IF NOT EXISTS suspicious_activity (
       id SERIAL PRIMARY KEY,
@@ -1150,7 +1150,7 @@ async function migrate() {
   `);
   await run(`CREATE INDEX IF NOT EXISTS idx_suspicious_severity ON suspicious_activity(severity, resolved, created_at DESC)`);
 
-  // 45. Klub e'lonlari (yangilik / aksiya) — mijoz mobil ilovaga push
+  // 45. Club announcements (news / promotions) — push to the customer mobile app
   await run(`
     CREATE TABLE IF NOT EXISTS announcements (
       id SERIAL PRIMARY KEY,
@@ -1174,11 +1174,11 @@ async function migrate() {
   await run(`CREATE INDEX IF NOT EXISTS idx_announcements_lab_status ON announcements(lab_id, status, created_at DESC)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_announcements_active ON announcements(lab_id, is_pinned DESC, starts_at DESC) WHERE status='active'`);
 
-  // ── SOVG'A TANGASI (coin_earn_rate — topup foizi sifatida) ───────────────
+  // ── GIFT COINS (coin_earn_rate — as a percentage of the top-up) ──────────
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS coin_earn_rate NUMERIC(5,2) DEFAULT 0`);
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS topup_bonus_percent NUMERIC(5,2) DEFAULT 0`);
 
-  // 46. QR check-in orqali ro'yxatdan o'tganlarni belgilash
+  // 46. Mark users registered via QR check-in
   await run(`ALTER TABLE user_lab_balances ADD COLUMN IF NOT EXISTS qr_registered BOOLEAN DEFAULT false`);
 
   // 47. Smart Package System
@@ -1189,12 +1189,12 @@ async function migrate() {
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS deep_discount_warning_percent INTEGER DEFAULT 30`);
   await run(`CREATE INDEX IF NOT EXISTS idx_sessions_user_lab_started ON sessions(user_id, lab_id, started_at DESC) WHERE status != 'cancelled'`);
 
-  // 48. Premium (maxsus) paket turi
+  // 48. Premium (special) package type
   await run(`ALTER TABLE packages DROP CONSTRAINT IF EXISTS packages_type_check`);
   await run(`ALTER TABLE packages ADD CONSTRAINT packages_type_check CHECK (type IN ('small','big','premium'))`);
   await run(`ALTER TABLE packages ADD COLUMN IF NOT EXISTS min_client_avg_hours NUMERIC(5,2)`);
 
-  // 49. Vaqtga qarab dinamik narx (xona bo'yicha, max 3 slot)
+  // 49. Time-based dynamic pricing (per room, max 3 slots)
   await run(`
     CREATE TABLE IF NOT EXISTS room_price_schedules (
       id           SERIAL PRIMARY KEY,
@@ -1209,21 +1209,21 @@ async function migrate() {
   `);
   await run(`CREATE INDEX IF NOT EXISTS idx_rps_lab_room ON room_price_schedules(lab_id, room_id)`);
 
-  // 50. Paket vaqt oralig'i (tungi/kunduzgi paketlar)
+  // 50. Package time windows (night/day packages)
   await run(`ALTER TABLE packages ADD COLUMN IF NOT EXISTS active_from_hour SMALLINT`);
   await run(`ALTER TABLE packages ADD COLUMN IF NOT EXISTS active_to_hour SMALLINT`);
   await run(`ALTER TABLE packages ADD COLUMN IF NOT EXISTS is_night BOOLEAN DEFAULT false`);
   await run(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS time_limited_pkg BOOLEAN DEFAULT false`);
   await run(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS pkg_window_ends_at TIMESTAMPTZ`);
 
-  // 51. Club-Hub WebSocket autentifikatsiya kaliti
+  // 51. Club-Hub WebSocket authentication key
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS hub_secret VARCHAR(64)`);
 
-  // 52. OTP kodlar — plaintext o'rniga SHA-256 hash
+  // 52. OTP codes — SHA-256 hash instead of plaintext
   await run(`ALTER TABLE otp_codes ADD COLUMN IF NOT EXISTS code_hash VARCHAR(64)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_otp_phone_hash_active ON otp_codes(phone, code_hash) WHERE used=false`);
 
-  // 53. QR check-in anomaliya aniqlash + rotating QR uchun log
+  // 53. QR check-in anomaly detection + log for rotating QR
   await run(`
     CREATE TABLE IF NOT EXISTS checkin_log (
       id SERIAL PRIMARY KEY,
@@ -1255,7 +1255,7 @@ async function migrate() {
   `);
   await run(`CREATE INDEX IF NOT EXISTS idx_qr_anomaly_lab_time ON qr_anomaly_log(lab_id, detected_at DESC)`);
 
-  // 54. Owner uchun FCM push tokenlar (users uchun alohida jadval bo'lgani uchun)
+  // 54. FCM push tokens for owners (separate, because users have their own table)
   await run(`
     CREATE TABLE IF NOT EXISTS owner_fcm_tokens (
       id SERIAL PRIMARY KEY,
@@ -1268,12 +1268,12 @@ async function migrate() {
   `);
   await run(`CREATE INDEX IF NOT EXISTS idx_owner_fcm_owner ON owner_fcm_tokens(owner_id)`);
 
-  // 55. Sodiqlik ball stavkalari (booking, referral, yangi foydalanuvchi)
+  // 55. Loyalty point rates (booking, referral, new user)
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS booking_coins INTEGER DEFAULT 50`);
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS referral_coins INTEGER DEFAULT 200`);
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS new_user_coins INTEGER DEFAULT 0`);
 
-  // 56. Station (bilyard/PS) tariflari va sessiya kengaytmalari
+  // 56. Station (billiards/PS) rates and session extensions
   await run(`ALTER TABLE computers ADD COLUMN IF NOT EXISTS zone_name VARCHAR(50)`);
   await run(`ALTER TABLE computers ADD COLUMN IF NOT EXISTS min_players SMALLINT DEFAULT 1`);
   await run(`ALTER TABLE computers ADD COLUMN IF NOT EXISTS max_players SMALLINT DEFAULT 4`);
@@ -1305,7 +1305,7 @@ async function migrate() {
 
 
   // ═══════════════════════════════════════════════════════════════════════
-  // 46. GLOBAL GAME CATALOG — barcha klublar uchun tayyor o'yinlar bazasi
+  // 46. GLOBAL GAME CATALOG — ready-made game database for all clubs
   // ═══════════════════════════════════════════════════════════════════════
   await run(`
     CREATE TABLE IF NOT EXISTS game_catalog (
@@ -1330,11 +1330,11 @@ async function migrate() {
   await run(`CREATE INDEX IF NOT EXISTS idx_game_catalog_platform ON game_catalog(platform)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_game_catalog_genre ON game_catalog(genre)`);
 
-  // games jadvaliga catalog_id ustuni (import qilingan o'yinlar uchun)
+  // catalog_id column on the games table (for imported games)
   await run(`ALTER TABLE games ADD COLUMN IF NOT EXISTS catalog_id INTEGER REFERENCES game_catalog(id) ON DELETE SET NULL`);
   await run(`CREATE INDEX IF NOT EXISTS idx_games_catalog ON games(lab_id, catalog_id) WHERE catalog_id IS NOT NULL`);
 
-  // Seed: 30+ mashhur o'yin (O'zbekiston klublarida keng tarqalgan)
+  // Seed: 30+ popular games (widespread in Uzbek clubs)
   await run(`
     INSERT INTO game_catalog (
       name, slug, description, cover_url, trailer_url, platform, default_exe_path,
@@ -1559,7 +1559,7 @@ async function migrate() {
       sort_order       = EXCLUDED.sort_order
   `);
 
-  // Blok 47 — O'zbekiston klublarida mashhur qo'shimcha o'yinlar
+  // Block 47 — additional games popular in Uzbek clubs
   await run(`
     INSERT INTO game_catalog (
       name, slug, description, cover_url, trailer_url, platform, default_exe_path,
@@ -1694,10 +1694,10 @@ async function migrate() {
     ON CONFLICT (slug) DO NOTHING
   `);
 
-  // Blok 48 — game_catalog ga description_ru ustuni (Rus tilida tasnif)
+  // Block 48 — description_ru column on game_catalog (description in Russian)
   await run(`ALTER TABLE game_catalog ADD COLUMN IF NOT EXISTS description_ru TEXT`);
 
-  // Blok 49 — Gaming profil (VAZIFA 5)
+  // Block 49 — Gaming profile (TASK 5)
   await run(`ALTER TABLE users ADD COLUMN IF NOT EXISTS gamer_tag VARCHAR(30)`);
   await run(`ALTER TABLE users ADD COLUMN IF NOT EXISTS steam_id VARCHAR(32)`);
   await run(`ALTER TABLE users ADD COLUMN IF NOT EXISTS bio VARCHAR(200)`);
@@ -1712,7 +1712,7 @@ async function migrate() {
     )
   `);
 
-  // Blok 49b — Sevimli klublar
+  // Block 49b — Favorite clubs
   await run(`
     CREATE TABLE IF NOT EXISTS user_favorite_labs (
       id SERIAL PRIMARY KEY,
@@ -1723,7 +1723,7 @@ async function migrate() {
     )
   `);
 
-  // Blok 50 — Do'stlar tizimi (VAZIFA 6)
+  // Block 50 — Friends system (TASK 6)
   await run(`
     CREATE TABLE IF NOT EXISTS friendships (
       id SERIAL PRIMARY KEY,
@@ -1738,7 +1738,7 @@ async function migrate() {
   `);
   await run(`CREATE INDEX IF NOT EXISTS ix_friendships_addressee ON friendships(addressee_id, status)`);
 
-  // Blok 52 — Referral count + code length fix (VAZIFA 12)
+  // Block 52 — Referral count + code length fix (TASK 12)
   await run(`ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0`);
   // Generate referral codes for users who don't have one
   await run(`
@@ -1746,7 +1746,7 @@ async function migrate() {
     WHERE referral_code IS NULL
   `);
 
-  // Blok 51d — PC Specs (VAZIFA 11)
+  // Block 51d — PC Specs (TASK 11)
   await run(`ALTER TABLE computers ADD COLUMN IF NOT EXISTS cpu VARCHAR(100)`);
   await run(`ALTER TABLE computers ADD COLUMN IF NOT EXISTS gpu VARCHAR(100)`);
   await run(`ALTER TABLE computers ADD COLUMN IF NOT EXISTS ram_gb INTEGER`);
@@ -1755,7 +1755,7 @@ async function migrate() {
   await run(`ALTER TABLE computers ADD COLUMN IF NOT EXISTS peripherals TEXT`);
   await run(`ALTER TABLE computers ADD COLUMN IF NOT EXISTS photo_url VARCHAR(500)`);
 
-  // Blok 51c — Achievements (VAZIFA 9)
+  // Block 51c — Achievements (TASK 9)
   await run(`
     CREATE TABLE IF NOT EXISTS achievements (
       id SERIAL PRIMARY KEY,
@@ -1783,7 +1783,7 @@ async function migrate() {
     await seedAchievements();
   } catch (e) { console.warn('[achievements seed]', e.message); }
 
-  // Blok 51b — Tournament brackets (VAZIFA 8)
+  // Block 51b — Tournament brackets (TASK 8)
   await run(`
     CREATE TABLE IF NOT EXISTS tournament_brackets (
       id SERIAL PRIMARY KEY,
@@ -1801,12 +1801,12 @@ async function migrate() {
   await run(`ALTER TABLE tournament_participants ADD COLUMN IF NOT EXISTS seed INTEGER`);
   await run(`ALTER TABLE tournament_participants ADD COLUMN IF NOT EXISTS eliminated BOOLEAN DEFAULT false`);
 
-  // Blok 51a — Squad booking (VAZIFA 7)
+  // Block 51a — Squad booking (TASK 7)
   await run(`ALTER TABLE booking_groups ADD COLUMN IF NOT EXISTS is_squad BOOLEAN DEFAULT false`);
   await run(`ALTER TABLE booking_seats ADD COLUMN IF NOT EXISTS invited_user_id INTEGER REFERENCES users(id)`);
   await run(`ALTER TABLE booking_seats ADD COLUMN IF NOT EXISTS invite_status VARCHAR(20) DEFAULT 'pending'`);
 
-  // Blok 51 — Labs katalog ustunlari (VAZIFA 2 — superAdmin)
+  // Block 51 — Labs catalog columns (TASK 2 — superAdmin)
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'`);
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS source VARCHAR(30)`);
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS external_ref JSONB`);
@@ -1815,7 +1815,7 @@ async function migrate() {
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS city VARCHAR(100)`);
   await run(`ALTER TABLE labs ADD COLUMN IF NOT EXISTS logo_url TEXT`);
 
-  // Blok 52 — sessions.source
+  // Block 52 — sessions.source
   await run(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS source VARCHAR(30) DEFAULT 'app'`);
 
   console.log('Migratsiya tugadi ✓');
@@ -1827,19 +1827,19 @@ const { apiLimiter } = require('./middleware/security');
 
 const app = express();
 
-// ── SSE: admin panelga real-time xabarlar ────────────────────────────────
+// ── SSE: real-time messages to the admin panel ───────────────────────────
 const sse = require('./utils/sse');
 
-// MANUAL CORS — birinchi middleware, hech kim override qilmasin
+// MANUAL CORS — first middleware, nothing should override it
 function isOriginAllowed(origin) {
   if (!origin) return true;
   if (process.env.ALLOWED_ORIGINS) {
     const list = process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim());
     if (list.includes(origin)) return true;
   }
-  // localhost va 127.0.0.1 — istalgan port (development uchun)
+  // localhost and 127.0.0.1 — any port (for development)
   if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
-  // Tunnel domenlar
+  // Tunnel domains
   if (/^https:\/\/[a-z0-9-]+\.(trycloudflare\.com|ngrok(-free)?\.app|ngrok\.io)$/i.test(origin)) return true;
   return false;
 }
@@ -1858,7 +1858,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Helmet — CORS'dan keyin (cross-origin resurslarga ruxsat)
+// Helmet — after CORS (allow cross-origin resources)
 app.use(helmet({
   crossOriginEmbedderPolicy: false,
   crossOriginResourcePolicy: { policy: 'cross-origin' },
@@ -1871,7 +1871,7 @@ app.use(helmet({
   },
 }));
 
-// XAVFSIZLIK: production'da ALLOWED_ORIGINS majburiy — aks holda dev default (localhost)
+// SECURITY: ALLOWED_ORIGINS is required in production — otherwise the dev default (localhost)
 const DEFAULT_DEV_ORIGINS = [
   'http://localhost:3001', 'http://localhost:3002', 'http://localhost:3003', 'http://localhost:3004', 'http://localhost:3005', 'http://localhost:3006',
   'http://localhost:8080', 'http://localhost:8888', 'http://localhost:5173',
@@ -1881,17 +1881,17 @@ const DEFAULT_DEV_ORIGINS = [
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
   : (process.env.NODE_ENV === 'production'
-      ? []  // production'da ochiq origin ta'qiqlangan
+      ? []  // open origins are forbidden in production
       : DEFAULT_DEV_ORIGINS);
 
-// Dev muhitda cloudflared tunnel URL'lariga ham ruxsat (test uchun)
+// In dev, also allow cloudflared tunnel URLs (for testing)
 const TRUSTED_TUNNEL_HOSTS = [
   /^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/i,
   /^https:\/\/[a-z0-9-]+\.ngrok(-free)?\.app$/i,
   /^https:\/\/[a-z0-9-]+\.ngrok\.io$/i,
 ];
 
-// cors middleware'ni olib tashladik — MANUAL CORS yuqorida ishlaydi (Express 5 mos)
+// Removed the cors middleware — MANUAL CORS above handles it (Express 5 compatible)
 
 app.use(express.json({ limit: '1mb' }));
 app.use('/api', apiLimiter);
@@ -1912,7 +1912,7 @@ app.use('/api/help',          require('./routes/help'));
 app.use('/api/labs',          require('./routes/labs'));
 app.use('/api/sessions',      require('./routes/sessions'));
 app.use('/api/bookings',      require('./routes/bookings'));
-// IP whitelist tekshiruvi — /api/owner ga kirishdan oldin
+// IP whitelist check — before accessing /api/owner
 const { checkOwnerWhitelist } = require('./middleware/ipWhitelist');
 app.use('/api/owner', checkOwnerWhitelist);
 app.use('/api/finance', checkOwnerWhitelist);
@@ -1932,7 +1932,7 @@ app.use('/api/achievements', require('./routes/achievements').router);
 app.use('/api/referral',     require('./routes/referral').router);
 app.use('/api/tournaments',   require('./routes/tournaments'));
 app.use('/api/games',         require('./routes/games'));
-// Global Game Catalog — public + owner + super admin routelar
+// Global Game Catalog — public + owner + super admin routes
 const gameCatalog = require('./routes/gameCatalog');
 app.use('/api/game-catalog',  gameCatalog.publicRouter);
 app.use('/api/owner',         gameCatalog.ownerRouter);
@@ -1957,13 +1957,13 @@ app.use('/api/checkin',       require('./routes/checkin'));
 app.use('/api/fiscal',        require('./routes/fiscal'));
 app.use('/api/apps',          require('./routes/apps'));
 app.use('/api/theme',         require('./routes/theme'));
-// Launcher temalari (auto-update + upload)
+// Launcher themes (auto-update + upload)
 const launcherThemes = require('./routes/launcherThemes');
 app.use('/api/themes',              launcherThemes.publicRouter);
 app.use('/api/owner/themes',        launcherThemes.ownerRouter);
 app.use('/api/callbacks/themes',    launcherThemes.ownerRouter); // Click/Payme callback alias
-// Launcher temalari (HTML fayllar) — preview, embed, agent yuklab olishi uchun
-// Tema HTML'lari — iframe preview uchun CSP va X-Frame-Options bo'shatiladi
+// Launcher themes (HTML files) — for preview, embedding and agent download
+// Theme HTML — CSP and X-Frame-Options are relaxed for iframe preview
 app.use('/themes', (req, res, next) => {
   res.removeHeader('X-Frame-Options');
   res.setHeader('Content-Security-Policy',
@@ -1971,7 +1971,7 @@ app.use('/themes', (req, res, next) => {
   );
   next();
 }, require('express').static(require('path').join(__dirname, '../public/themes')));
-// Boot da manifest yaratamiz (yoki mavjudini yangilaymiz)
+// Create the manifest on boot (or update the existing one)
 try { require('./utils/themesManifest').generateManifest(); } catch (e) { console.warn('[themes] manifest yaratishda xato:', e.message); }
 
 app.use('/uploads', (req, res, next) => {
@@ -1993,7 +1993,7 @@ app.get('/api/health', async (req, res) => {
     await require('./config/db').query('SELECT 1');
     dbOk = true;
     dbLatencyMs = Date.now() - t0;
-  } catch (e) { /* db uzilgan */ }
+  } catch (e) { /* db disconnected */ }
   const status = dbOk ? 'ok' : 'degraded';
   res.status(dbOk ? 200 : 503).json({
     status, project: 'CyberNet',
@@ -2004,7 +2004,7 @@ app.get('/api/health', async (req, res) => {
   });
 });
 
-// Admin panel static serve — production'da build'ni beradi (agar mavjud bo'lsa)
+// Admin panel static serve — serves the build in production (if present)
 {
   const _path = require('path');
   const _fs = require('fs');
@@ -2020,7 +2020,7 @@ app.get('/api/health', async (req, res) => {
   }
 }
 
-// SSE: admin panel ulanganda shu endpointga ulanadi (token query param orqali)
+// SSE: the admin panel connects to this endpoint (token via query param)
 const jwt = require('jsonwebtoken');
 app.get('/api/owner/events', (req, res) => {
   const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
@@ -2041,7 +2041,7 @@ app.get('/api/owner/events', (req, res) => {
   });
 });
 
-// ── Sessiya tugash ogohlantirishlari (har 1 daqiqa) ──────────────────────
+// ── Session-ending warnings (every 1 minute) ─────────────────────────────
 const { sendToUser: fcmSend } = require('./utils/fcm');
 if (process.env.NODE_ENV !== 'test') setInterval(async () => {
   try {
@@ -2062,10 +2062,10 @@ if (process.env.NODE_ENV !== 'test') setInterval(async () => {
   } catch {}
 }, 60000);
 
-// ── Bron no-show tizimi (har 60 soniya) ──────────────────────────────────
+// ── Booking no-show system (every 60 seconds) ────────────────────────────
 if (process.env.NODE_ENV !== 'test') setInterval(async () => {
   try {
-    // 1. Ogohlantirish: expires_at ga 5 daqiqa qolgan bronlar
+    // 1. Warning: bookings with 5 minutes left until expires_at
     const warnRes = await pool.query(`
       SELECT b.id, b.user_id, b.computer_id, b.expires_at,
              u.name AS user_name, u.phone AS user_phone,
@@ -2092,7 +2092,7 @@ if (process.env.NODE_ENV !== 'test') setInterval(async () => {
       });
     }
 
-    // 2. Avtomatik yaroqsiz: expires_at o'tgan, klient login qilmagan
+    // 2. Auto-expire: expires_at passed, client did not log in
     const expireRes = await pool.query(`
       SELECT b.id, b.user_id, b.computer_id,
              c.number AS computer_number, c.lab_id,
@@ -2130,7 +2130,7 @@ if (process.env.NODE_ENV !== 'test') setInterval(async () => {
   } catch (e) { console.error('Booking expiry check error:', e.message); }
 }, 60000);
 
-// ── Bron vaqti kelishi bildirishnomasi (har 30 soniya) ───────────────────
+// ── Booking start-time notification (every 30 seconds) ───────────────────
 if (process.env.NODE_ENV !== 'test') setInterval(async () => {
   try {
     const arrivals = await pool.query(`
@@ -2173,7 +2173,7 @@ if (process.env.NODE_ENV !== 'test') setInterval(async () => {
   } catch (e) { console.error('Booking arrival notif error:', e.message); }
 }, 30000);
 
-// ── Balansdan avtomatik vaqt uzaytirish (har 30 soniya) ──────────────────
+// ── Auto-extend time from balance (every 30 seconds) ─────────────────────
 if (process.env.NODE_ENV !== 'test') setInterval(async () => {
   try {
     const expired = await pool.query(`
@@ -2192,7 +2192,7 @@ if (process.env.NODE_ENV !== 'test') setInterval(async () => {
     for (const sess of expired.rows) {
       const rate = parseFloat(sess.hourly_rate) || parseFloat(sess.price_per_hour) || 0;
       if (!rate) {
-        // Rate yo'q — sessiya uzaytirib bo'lmaydi, yopish uchun flag'ni o'chirish
+        // No rate — the session can't be extended, clear the flag so it closes
         await pool.query('UPDATE sessions SET extend_from_balance=false WHERE id=$1', [sess.id]);
         continue;
       }
@@ -2230,7 +2230,7 @@ if (process.env.NODE_ENV !== 'test') setInterval(async () => {
   }
 }, 30000);
 
-// ── Vaqti tugagan sessiyalarni avtomatik yopish (har 60 soniya) ──────────
+// ── Auto-close expired sessions (every 60 seconds) ───────────────────────
 if (process.env.NODE_ENV !== 'test') setInterval(async () => {
   try {
     const expired = await pool.query(`
@@ -2302,7 +2302,7 @@ if (process.env.NODE_ENV !== 'test') setInterval(async () => {
   }
 }, 60000);
 
-// ── Paket vaqt oralig'i tugagan sessiyalarni nazorat (har 30 soniya) ────
+// ── Monitor sessions whose package time window ended (every 30 seconds) ───
 if (process.env.NODE_ENV !== 'test') setInterval(async () => {
   try {
     const windowed = await pool.query(`
@@ -2347,7 +2347,7 @@ if (process.env.NODE_ENV !== 'test') setInterval(async () => {
   } catch (e) { console.error('Pkg window expiry error:', e.message); }
 }, 30000);
 
-// ── Global error handler — ichki xato tafsilotlarini yashirish ──────────
+// ── Global error handler — hide internal error details ──────────────────
 app.use((err, req, res, next) => {
   console.error('[ERROR]', req.method, req.path, err.message);
   const isProd = process.env.NODE_ENV === 'production';
@@ -2356,7 +2356,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-// ── SERVER ISHGA TUSHIRISH ────────────────────────────────────────────────
+// ── SERVER STARTUP ────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 const { initSessionTimers, scheduleClose: scheduleSessionClose, startHeartbeatWatchdog } = require('./utils/sessionTimer');
 
@@ -2365,20 +2365,20 @@ if (process.env.NODE_ENV !== 'test') {
     .then(() => {
       initSessionTimers();
       startHeartbeatWatchdog();
-      // Kunlik anomaliya hisoboti (Telegram) — TELEGRAM_BOT_TOKEN sozlangan bo'lsa faqat
+      // Daily anomaly report (Telegram) — only if TELEGRAM_BOT_TOKEN is set
       try {
         const { scheduleDaily } = require('./utils/dailyReport');
         scheduleDaily();
       } catch (e) { console.error('Daily report schedule xatosi:', e.message); }
-      // Grace monitor — bulk booking uchun
+      // Grace monitor — for bulk bookings
       try {
         require('./utils/graceMonitor').start();
       } catch (e) { console.error('Grace monitor xatosi:', e.message); }
-      // Pre-order monitor — bar buyurtmalar uchun
+      // Pre-order monitor — for bar orders
       try {
         require('./utils/preOrderMonitor').start();
       } catch (e) { console.error('Pre-order monitor xatosi:', e.message); }
-      // Pending payment cleanup — tolov yakuniga chiqmagan orderlarni bekor qiladi
+      // Pending payment cleanup — cancels orders whose payment was never completed
       try {
         require('./utils/pendingPaymentCleanup').start();
       } catch (e) { console.error('Pending payment cleanup xatosi:', e.message); }
@@ -2388,7 +2388,7 @@ if (process.env.NODE_ENV !== 'test') {
       setupHubWs(server);
       server.listen(PORT, () => {
         console.log(`CyberNet API ishlamoqda: http://localhost:${PORT}`);
-        // Telegram bot webhook — deep-link ro'yxatdan o'tish uchun
+        // Telegram bot webhook — for deep-link registration
         try {
           const publicUrl = process.env.PUBLIC_URL || 'https://example.com';
           const tgAuth = require('./routes/tgAuth');
@@ -2401,7 +2401,7 @@ if (process.env.NODE_ENV !== 'test') {
     .catch(e => { console.error('FATAL MIGRATION ERROR:', e.message); process.exit(1); });
 }
 
-// 404 logger — qaysi endpoint topilmayotganini aniqlash uchun
+// 404 logger — to find which endpoints are not being found
 app.use('/api', (req, res) => {
   console.warn(`[404] ${req.method} ${req.path} — topilmadi`);
   res.status(404).json({ error: 'Endpoint topilmadi: ' + req.method + ' ' + req.path });
